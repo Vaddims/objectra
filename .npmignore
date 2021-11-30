@@ -1,0 +1,7 @@
+src
+test
+jest.config.ts
+.gitignore
+.npmignore
+package-lock.json
+tsconfig.json
