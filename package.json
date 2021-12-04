@@ -1,26 +1,23 @@
 {
   "name": "objectra",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Utility for deep object duplication, serialization and parsing",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
     "test": "jest",
-    "build": "tsc",
-    "prepublish": "npm run build & npm run test"
+    "build": "tsc"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Vaddims/Objectra"
+    "url": "git+https://github.com/Vaddims/objectra"
   },
   "keywords": [
     "copy",
     "duplicate",
-    "duplication",
     "parse",
-    "parsing",
     "serialize",
-    "serialization"
+    "inheritance"
   ],
   "author": {
     "email": "vadym.iefremov@gmail.com",
@@ -29,9 +26,9 @@
   },
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/Vaddims/Objectra/issues"
+    "url": "https://github.com/Vaddims/objectra/issues"
   },
-  "homepage": "https://github.com/Vaddims/Objectra#readme",
+  "homepage": "https://github.com/Vaddims/objectra#readme",
   "devDependencies": {
     "@types/jest": "^27.0.3",
     "jest": "^27.3.1",
