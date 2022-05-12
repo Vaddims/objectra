@@ -1,37 +1,28 @@
-type IndexableObject<T = unknown> = { [key: string]: T };
+import { TransformationBridge } from "./transformation-bridge";
+import { Transformator } from "./transformator";
+import { randomUUID } from 'crypto';
+import util from 'util';
 
-type ObjectraContentPrimitives = number | string | boolean | null;
+export type IndexableObject<T = unknown> = { [key: string]: T } & Object;
+
+type ObjectraContentPrimitives = number | string | boolean | null | undefined;
 export type ObjectraContent<T = Objectra> = ObjectraContentPrimitives | IndexableObject<T> | T[];
-export type SerializedObjectraContent = ObjectraContent<SerializedObjectra>;
 
 /** Serialized "Objectra like" object */
 export interface SerializedObjectra {
+	references?: SerializedObjectraContent;
 	content?: SerializedObjectraContent;
 	type?: string;
+	id?: string;
 }
 
-export interface TransformatorDeclaration {
-	/** Instantiate target class from content */
-	construct?: (content: any, constructor: Function) => unknown;
-
-	/** Create a pure object from an instance of the target class */
-	simplify?: (content: any) => IndexableObject | unknown[];
-
-	/** Manually Objectrafy the content, and then instantiate the target class from it. */
-	toValue?: (content: any) => unknown;
-
-	/** Manually deep serialize the content */
-	toContent?: (content: any) => ObjectraContent | undefined;
-}
-
-interface Transformator extends TransformatorDeclaration {
-	construct?: (content: any) => unknown;
-}
-
-const transformators = new Map<string, Transformator>();
+export type SerializedObjectraContent = ObjectraContent<SerializedObjectra>;
 
 export class Objectra {
+	public id?: string;
 	public type?: string;
+	public version?: string;
+	public references?: ObjectraContent;
 	public readonly content?: ObjectraContent;
 
 	constructor(type?: Function | string, content?: ObjectraContent) {
@@ -59,35 +50,35 @@ export class Objectra {
 			throw new Error(`The Objectra type is unexpectedly undefined.`);
 		}
 
-		const { construct, toValue } = Objectra.getTransformator(type);
-		if (toValue) {
-			const value = toValue(content);
+		const { instantiate, instantiateManualy } = Transformator.get(type);
+		if (instantiateManualy) {
+			const value = instantiateManualy(content);
 			return value;
 		}
 
-		if (construct) {
-			if (typeof content === 'object') {
-				if (content instanceof Objectra) {
-					return content.toValue();
-				}
-
-				const { constructor } = content;
-				const contentTransformator = Objectra.getTransformator(constructor);
-
-				if (contentTransformator.toValue) {
-					const value = contentTransformator.toValue(content);
-					return construct(value);
-				}
-
-				throw new Error(
-					`${constructor.name} transformator must contain a \`toValue\` function to parse the content value.`
-				);
-			}
-
-			return construct(content);
+		if (!instantiate) {
+			throw new Error(`${type} transformator must contain at least one parsing function. (\`construct\` or \`toValue\`)`);
 		}
 
-		throw new Error(`${type} transformator must contain at least one parsing function. (\`construct\` or \`toValue\`)`);
+		if (typeof content !== 'object') {
+			return instantiate(content);
+		}
+
+		if (content instanceof Objectra) {
+			return content.toValue();
+		}
+
+		const { constructor } = content;
+		const contentTransformator = Transformator.get(constructor);
+
+		if (contentTransformator.instantiateManualy) {
+			const value = contentTransformator.instantiateManualy(content);
+			return instantiate(value);
+		}
+
+		throw new Error(
+			`${constructor.name} transformator must contain a \`toValue\` function to parse the content value.`
+		);
 	}
 
 	/** Create a serialized object */
@@ -101,38 +92,115 @@ export class Objectra {
 	}
 
 	/** Create an Objectra from a value */
-	static from(value?: unknown): Objectra {
-		if (typeof value === 'function' || typeof value === 'undefined') {
-			return new Objectra();
+	public static from(value: unknown, options?: {}): Objectra {
+		type ReferenceType = symbol | IndexableObject | unknown[] | object;
+		const touches = new Set<ReferenceType>();
+		const referenceMap = new Map<ReferenceType, string>();
+
+		function touch(target: unknown) {
+			if (target instanceof Objectra) {
+				throw new Error(`Objectra cannot be created from itself.`);
+			}
+
+			if ((typeof target !== 'object' && typeof target !== 'symbol') || target === null) {
+				return;
+			}
+
+			if (touches.has(target)) {
+				if (referenceMap.has(target)) {
+					return;
+				}
+
+				referenceMap.set(target, randomUUID());
+				return;
+			}
+
+			touches.add(target);
+
+			if (typeof target === 'symbol') {
+				return;
+			}
+
+			if (Array.isArray(target)) {
+				target.forEach(touch);
+				return;
+			}
+
+			if (target instanceof Object) {
+				const object = target as IndexableObject;
+				for (const key in object) {
+					touch(object[key]);
+				}
+			}
 		}
 
-		if (value === null) {
-			return new Objectra(undefined, null);
-		}
+		function objectrafy(target: unknown, useOnlyId = true) {
+			if (target instanceof Objectra) {
+				throw new Error(`Passed value to Objectra.from is already an Objectra.`);
+			}
 
-		const { constructor } = value as Object;
-		const { simplify, toContent } = Objectra.getTransformator(constructor);
+			if (typeof target === 'undefined') {
+				return new Objectra();
+			}
 
-		if (typeof toContent === 'function') {
-			const content = toContent(value);
-			return new Objectra(constructor, content);
-		}
+			if (target === null) {
+				return new Objectra(undefined, null);
+			}
 
-		if (typeof simplify === 'function') {
-			const simplifiedValue = simplify(value);
-			const objectra = Objectra.from(simplifiedValue);
-			objectra.type = constructor.name;
+			const { constructor: targetConstructor } = target as Object;
+			const { serialize, serializeManualy } = Transformator.get(targetConstructor);
+
+			const referenceId = referenceMap.get(target as ReferenceType);
+			if (referenceId && useOnlyId) {
+				const objectra = new Objectra();
+				objectra.id = referenceId;
+				return objectra;
+			}
+
+			if (serializeManualy) {
+				const transformationBridge = new TransformationBridge(target, objectrafy);
+				const objectraContent = serializeManualy(transformationBridge);
+				const objectra = new Objectra(targetConstructor, objectraContent);
+				if (!useOnlyId) {
+					objectra.id = referenceId;
+				}
+				return objectra;
+			}
+
+			if (!serialize) {
+				throw new Error(`${targetConstructor.name} transformator must contain at least one serialization function. (\`serialize\` or \`serializeManualy\`)`);
+			}
+
+			const serializedValue = serialize(value);
+			const objectra = Objectra.from(serializedValue);
+			objectra.type = targetConstructor.name;
+			if (!useOnlyId) {
+				objectra.id = referenceId;
+			}
 			return objectra;
 		}
 
-		throw new Error(
-			`${constructor.name} transformator must contain at least one serializing function. (\`simplify\` or \`toContent\`)`
-		);
+		touch(value);
+		const mainObjectra = objectrafy(value);
+
+		if (referenceMap.size === 0) {
+			return mainObjectra;
+		}
+
+		mainObjectra.references = [];
+		for (const referenceEntry of referenceMap) {
+			const [reference, id] = referenceEntry;
+			const referenceObjectra = objectrafy(reference, false);
+			referenceObjectra.id = id;
+			mainObjectra.references.push(referenceObjectra);
+		}
+
+		return mainObjectra;
 	}
 
 	/** Create an Objectra from a serialized object */
 	static fromSerialized<T extends SerializedObjectra>(value: T): Objectra {
-		const { content, type } = value;
+		const { type, content } = value;
 		if (typeof type === 'undefined' && typeof content === 'undefined') {
 			return new Objectra();
 		}
@@ -145,27 +213,25 @@ export class Objectra {
 			throw new Error(`The serialized Objectra type is unexpectedly undefined. The structure is corrupted`);
 		}
 
-		const TypedObjectra = Objectra.bind({}, type);
-
-		if (typeof content === 'object') {
-			if (Array.isArray(content)) {
-				const objectras = content.map(Objectra.fromSerialized);
-				return new TypedObjectra(objectras);
-			}
-
-			const object = content as IndexableObject<SerializedObjectra>;
-			const fields: ObjectraContent = {};
-
-			for (const key in object) {
-				const value = object[key];
-				const objectraContent = Objectra.fromSerialized(value);
-				fields[key] = objectraContent;
-			}
-
-			return new TypedObjectra(fields);
+		if (typeof content !== 'object') {
+			return new Objectra(type, content);
 		}
 
-		return new TypedObjectra(content);
+		if (Array.isArray(content)) {
+			const objectras = content.map(Objectra.fromSerialized);
+			return new Objectra(type, objectras);
+		}
+
+		const object = content as IndexableObject<SerializedObjectra>;
+		const fields: ObjectraContent = {};
+
+		for (const key in object) {
+			const value = object[key];
+			const objectraContent = Objectra.fromSerialized(value);
+			fields[key] = objectraContent;
+		}
+
+		return new Objectra(type, fields);
 	}
 
 	/** Create an Objectra from a serialized stringified json object */
@@ -192,131 +258,5 @@ export class Objectra {
 	/** Create a duplicate value that saves the object inheritance, bu removes all object references */
 	static duplicate(value: unknown): unknown {
 		return Objectra.from(value).toValue();
-	}
-
-	static getTransformator(constructor: Function | string): Transformator {
-		const constructorName = typeof constructor === 'function' ? constructor.name : constructor;
-		const transformator = transformators.get(constructorName);
-
-		if (transformator) {
-			return transformator;
-		}
-
-		throw new Error(`Transformator for \`${constructorName}\` is not assigned to transformator map`);
-	}
-
-	static addTransformator(constructors: Function | Function[], transformatorDeclaration: TransformatorDeclaration) {
-		const constructorArray = Array.isArray(constructors) ? constructors : [constructors];
-		for (const constructor of constructorArray) {
-			if (transformators.has(constructor.name)) {
-				throw new Error(`Transformator for \`${constructor.name}\` already exists`);
-			}
-	
-			const { construct, ...transformers } = transformatorDeclaration;
-			const transformator: Transformator = { ...transformers };
-	
-			if (construct) {
-				transformator.construct = (content: unknown) => construct(content, constructor);
-			}
-	
-			transformators.set(constructor.name, transformator);
-		}
-
-		return Objectra;
-	}
-
-	static {
-		Objectra.addTransformator([String, Boolean], {
-			construct: (content) => content,
-			toContent: (content: string | boolean) => content,
-		});
-
-		Objectra.addTransformator(Number, {
-			construct: (content) => Number(content),
-			toContent: (content: number) => (isNaN(content) ? content.toString() : content),
-		});
-
-		Objectra.addTransformator(Symbol, {
-			construct: (content) => Symbol(content),
-			toContent: (content: symbol) => content.description as string,
-		});
-
-		Objectra.addTransformator(BigInt, {
-			construct: (content) => BigInt(content),
-			toContent: (content: bigint) => content.toString(),
-		});
-
-		Objectra.addTransformator(Object, {
-			toValue: (content: IndexableObject<Objectra>) => {
-				const values: IndexableObject<unknown> = {};
-				for (const key in content) {
-					const objectra = content[key];
-					values[key] = objectra.toValue();
-				}
-
-				return values;
-			},
-			toContent: (content: IndexableObject<unknown>) => {
-				const fields: ObjectraContent = {};
-				for (const key in content) {
-					const value = content[key];
-					if (typeof value === 'function') {
-						continue;
-					}
-
-					fields[key] = Objectra.from(content[key]);
-				}
-
-				return fields;
-			},
-		});
-
-		Objectra.addTransformator(Array, {
-			toValue: (content: Objectra[]) => {
-				const values: unknown[] = [];
-				for (const objectra of content) {
-					values.push(objectra.toValue());
-				}
-
-				return values;
-			},
-			toContent: (content: unknown[]) => {
-				const elements: ObjectraContent = [];
-
-				for (const element of content) {
-					if (typeof element === 'function') {
-						continue;
-					}
-
-					elements.push(Objectra.from(element));
-				}
-
-				return elements;
-			},
-		});
-
-		Objectra.addTransformator(Objectra, {
-			simplify: (content: IndexableObject<unknown>) => ({ ...content }),
-			toValue: (content: IndexableObject<Objectra>) => {
-				const { toValue } = Objectra.getTransformator(Object);
-
-				if (toValue) {
-					const { type, content: objectraContent } = toValue(content) as SerializedObjectra;
-					return new Objectra(type as string, objectraContent as ObjectraContent);
-				}
-
-				throw new Error(`${Object.name} transformator must contain a \`toValue\` function to parse the Objectra.`);
-			},
-		});
-
-		Objectra.addTransformator(Map, {
-			construct: (content: [unknown, unknown][]) => new Map(content),
-			simplify: (content: Map<unknown, unknown>) => Array.from(content),
-		});
-
-		Objectra.addTransformator(Set, {
-			construct: (content: unknown[]) => new Set(content),
-			simplify: (content: Set<unknown>) => Array.from(content),
-		});
 	}
 }

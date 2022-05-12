@@ -9,7 +9,6 @@ describe('test transformer behaviours between Objectras and javscript values', (
 		test('undefined', () => {
 			const undefinedObjectra = new Objectra();
 
-			expect(undefinedObjectra).toStrictEqual(Objectra.from());
 			expect(undefinedObjectra).toStrictEqual(Objectra.from(undefined));
 			expect(undefinedObjectra.toValue()).toBe(undefined);
 		});
@@ -89,15 +88,6 @@ describe('test transformer behaviours between Objectras and javscript values', (
 			expect(nestedArrayObjectra).toStrictEqual(Objectra.from(array));
 			expect(nestedArrayObjectra.toValue()).toStrictEqual(array);
 			expect(nestedArrayObjectra.toValue()).not.toBe(array);
-		});
-
-		test('Objectra', () => {
-			const objectra = new Objectra(undefined, null);
-			const nestedObjecta = new Objectra(Objectra, { content: new Objectra(undefined, null) });
-
-			expect(nestedObjecta).toStrictEqual(Objectra.from(objectra));
-			expect(nestedObjecta.toValue()).toStrictEqual(objectra);
-			expect(nestedObjecta.toValue()).not.toBe(objectra);
 		});
 
 		test('Map', () => {

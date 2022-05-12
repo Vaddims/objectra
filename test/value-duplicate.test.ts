@@ -35,12 +35,6 @@ describe('test value duplication', () => {
 			expect(duplicate(array)).not.toBe(array);
 		});
 
-		test('Objectra', () => {
-			const objectra = new Objectra(Objectra, { content: new Objectra(String, string) });
-			expect(duplicate(objectra)).toEqual(objectra);
-			expect(duplicate(objectra)).not.toBe(objectra);
-		});
-
 		test('Map', () => {
 			const map = new Map([[string, number]]);
 			expect(duplicate(map)).toStrictEqual(map);
