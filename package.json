@@ -1,18 +1,22 @@
 {
   "name": "objectra",
-  "version": "1.1.1",
+  "version": "alpha2.0.0",
   "description": "Utility for deep object duplication, serialization and parsing",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
     "test": "jest",
-    "build": "tsc"
+    "build": "tsc",
+    "dev": "ts-node-dev --quiet --debounce --respawn --clear src/index.ts"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Vaddims/objectra"
   },
   "keywords": [
+    "object",
+    "instantiate",
+    "save",
     "copy",
     "duplicate",
     "parse",
@@ -33,6 +37,6 @@
     "@types/jest": "^27.0.3",
     "jest": "^27.3.1",
     "ts-jest": "^27.0.7",
-    "ts-node": "^10.4.0"
+    "ts-node-dev": "^1.1.8"
   }
 }
