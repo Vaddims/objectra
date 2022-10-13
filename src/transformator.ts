@@ -2,13 +2,13 @@ import { Objectra } from ".";
 import { getConstructorSuperConstructors } from './utils';
 import type { Constructor } from "./types/util.types";
 import { 
+  ArgumentPassthroughIndexAlreadyExistsError,
   InstantiationMethodDoesNotExistError, 
   InvalidInstantiationArgumentQuantityError, 
   SelfInstantiationError, 
   SelfSerializationError, 
   SerializationMethodDoesNotExistError, 
   TransformatorAlreadyRegisteredError, 
-  TransformatorAlreadySetupedError, 
   TransformatorNotFoundError 
 } from "./errors";
 import { Backloop } from "./types/backloop.types";
@@ -17,24 +17,46 @@ type IdentifierInstance<RegistrationIdentifier> = RegistrationIdentifier extends
   ? InstanceType<RegistrationIdentifier> 
   : RegistrationIdentifier;
 
-export class Transformator<IdentifierType extends Transformator.Identifier = Transformator.Identifier, InstanceType = any, SerializationType = any> {
+export class Transformator<IdentifierType extends Objectra.Identifier = Objectra.Identifier, InstanceType = any, SerializationType = any> {
   public readonly type: IdentifierType;
   public readonly overload?: number;
   public readonly argumentPassthrough: boolean;
-  public readonly ignoreDefaultTypeBehaviour: boolean;
+  public readonly ignoreDefaultArgumentBehaviour: boolean;
   private readonly transformers: Transformator.Transformers<InstanceType, SerializationType>;
-  private modified = false;
+
+  private argumentPassthroughPropertyKeys: string[]; // Not uncombinable with global argumentPassthrough
+  private propertyTransformationMapping: Transformator.PropertyTransformationMapping;
+
+  private propertyTransformationWhitelist: string[]; // Higher priority over the the transformation mask
+  private propertyTransformationMask: string[];
+
 
   private constructor(type: IdentifierType, options: Transformator.Options<InstanceType, SerializationType> = {}) {
-    const { overload, argumentPassthrough, typeIsNative, ...transformers } = options;
+    const { 
+      overload, 
+      argumentPassthrough = false, 
+      propertyTransformationMask = [],
+      propertyTransformationWhitelist = [],
+      argumentPassthroughPropertyKeys = [],
+      ignoreDefaultArgumentBehaviour = false,
+      propertyTransformationMapping = Transformator.PropertyTransformationMapping.Inclusion,
+      serializator,
+      instantiator,
+    } = options;
 
     this.type = type;
     this.overload = overload;
-    this.transformers = transformers;
-    this.argumentPassthrough = argumentPassthrough ?? false;
-    this.ignoreDefaultTypeBehaviour = typeIsNative ?? false;
+    this.argumentPassthrough = argumentPassthrough;
+    this.ignoreDefaultArgumentBehaviour = ignoreDefaultArgumentBehaviour;
+    this.transformers = { serializator, instantiator };
+    
+    this.propertyTransformationMapping = propertyTransformationMapping;
+    this.propertyTransformationMask = propertyTransformationMask;
+    this.propertyTransformationWhitelist = propertyTransformationWhitelist;
 
-    if (!this.ignoreDefaultTypeBehaviour && !this.transformers.instantiator && this.argumentPassthrough && typeof this.type === 'function' && this.type.length > 1) {
+    this.argumentPassthroughPropertyKeys = [...argumentPassthroughPropertyKeys];
+
+    if (!this.ignoreDefaultArgumentBehaviour && !this.transformers.instantiator && this.argumentPassthrough && typeof this.type === 'function' && this.type.length > 1) {
       throw new InvalidInstantiationArgumentQuantityError(this.identifierToString());
     }
   }
@@ -66,12 +88,13 @@ export class Transformator<IdentifierType extends Transformator.Identifier = Tra
       throw new SerializationMethodDoesNotExistError(this.identifierToString());
     }
 
-    const { instance, objectrafy } = bridge;
+    const { instance, objectrafy, instanceTransformator = this } = bridge;
 
     try {
       return this.transformers.serializator({
         instance,
         serialize: objectrafy,
+        instanceTransformator,
       });
     } catch (error) {
       if (error instanceof RangeError) {
@@ -87,13 +110,13 @@ export class Transformator<IdentifierType extends Transformator.Identifier = Tra
       throw new InstantiationMethodDoesNotExistError(this.identifierToString());
     }
 
-    const { value, instantiate, instance } = bridge;
-    const [backloopReferenceTree, resolve] = value.createBackloopReferenceDuplex();
+    const { value, instantiate, instance, initialTransformator = this } = bridge;
+    const [backloopRepresenter, resolve] = value['createBackloopReferenceDuplex']();
 
-    const representer = backloopReferenceTree;
+    const representer = backloopRepresenter;
     const instantiateValue = instantiate;
     const getRepresenterObjectra = resolve;
-    const getRepresenterValue = <T>(endpoint: Backloop.Reference<Objectra<T>>): T => getRepresenterObjectra(endpoint).content;
+    const getRepresenterValue = <T>(endpoint: Backloop.Reference<Objectra<T>>): T => (<Objectra<T, any>>getRepresenterObjectra(endpoint))['content'];
     const instantiateRepresenter = <K>(endpoint: Backloop.Reference<Objectra<K>>): K => instantiateValue(getRepresenterObjectra(endpoint));
 
     try {
@@ -104,6 +127,7 @@ export class Transformator<IdentifierType extends Transformator.Identifier = Tra
         getRepresenterObjectra,
         getRepresenterValue,
         instantiateRepresenter,
+        initialTransformator,
       });
     } catch (error) {
       if (error instanceof RangeError) {
@@ -115,19 +139,24 @@ export class Transformator<IdentifierType extends Transformator.Identifier = Tra
   }
 
   public static readonly registrations: Transformator<any, any>[] = [];
+  private static readonly registrationCallbackQueue = new Map<Objectra.Identifier, ((transformator: Transformator) => void)[]>();
 
-  public static registrationExists(identifier: Transformator.Identifier, overload?: number) {
+  public static registrationExists(identifier: Objectra.Identifier, overload?: number) {
     return Transformator.registrations.some((transformator) => transformator.type === identifier && transformator.overload === overload);
   }
 
-  public static find(identifier: Transformator.Identifier, overload?: number) {
+  public static find(identifier: Objectra.Identifier, overload?: number) {
+    if (typeof identifier === 'function') {
+      return Transformator.registrations.find(transformator => transformator.type === identifier);
+    }
+
     return Transformator.registrations.find((transformator) => 
       transformator.type === identifier &&
       transformator.overload === overload
     );
   }
 
-  public static get(identifier: Transformator.Identifier, overload?: number) {
+  public static get(identifier: Objectra.Identifier, overload?: number) {
     const transformator = Transformator.find(identifier, overload);
     if (!transformator) {
       throw new TransformatorNotFoundError(identifier);
@@ -155,7 +184,7 @@ export class Transformator<IdentifierType extends Transformator.Identifier = Tra
     return transformator;
   }
 
-  public static getSuperClassTransformators = function*(constructor: Constructor) {
+  public static getSuperTransformators = function*(constructor: Constructor) {
     const superConstructors = getConstructorSuperConstructors(constructor);
 
     for (const superConstructor of superConstructors) {
@@ -166,7 +195,7 @@ export class Transformator<IdentifierType extends Transformator.Identifier = Tra
     }
   }
   
-  public static register<RegistrationIdentifier extends Transformator.Identifier>(identifier: RegistrationIdentifier) {
+  public static register<RegistrationIdentifier extends Objectra.Identifier>(identifier: RegistrationIdentifier) {
     if (Transformator.registrationExists(identifier)) {
       throw new TransformatorAlreadyRegisteredError(identifier);
     }
@@ -179,10 +208,6 @@ export class Transformator<IdentifierType extends Transformator.Identifier = Tra
   public setup<SerializedStructure, RegistrationIdentifier = IdentifierType>(
     options: Transformator.Options<IdentifierInstance<RegistrationIdentifier>, SerializedStructure> = {}, //SetupOptions<RegistrationIdentifier, SerializedStructure> = {},
   ) {
-    if (this.modified) {
-      throw new TransformatorAlreadySetupedError(this.type);
-    }
-
     const transformatorIndex = Transformator.registrations.findIndex(
       transformator => transformator.type === this.type && transformator.overload === this.overload
     );
@@ -191,26 +216,103 @@ export class Transformator<IdentifierType extends Transformator.Identifier = Tra
       throw new TransformatorNotFoundError(this.type);
     }
 
-    this.modified = true;
-
     if (typeof this.type === 'string') {
       const transformator = new Transformator<IdentifierType, IdentifierInstance<RegistrationIdentifier>, SerializedStructure>(this.type, options);
       Transformator.registrations[transformatorIndex] = transformator;
       return transformator;
     }
 
-    const identifierArguments = this.type.length;
-    if (!options.instantiator && (options.typeIsNative ? !options.argumentPassthrough : identifierArguments > 1 || !options.argumentPassthrough)) {
-      throw new InstantiationMethodDoesNotExistError(this.type);
-    }
+    // TODO Check if instantiation method is required and throw an error if needed
 
     const transformator = new Transformator<IdentifierType, IdentifierInstance<RegistrationIdentifier>, SerializedStructure>(this.type, options);
     Transformator.registrations[transformatorIndex] = transformator;
     return transformator;
   }
 
-  public static typeToString(identifer: Transformator.Identifier) {
+  public static typeToString(identifer: Objectra.Identifier) {
     return typeof identifer === 'string' ? identifer : identifer.name;
+  }
+
+  public static Register<T = unknown, S = any, K extends Constructor = Constructor<T>>(options?: Transformator.Options<IdentifierInstance<K>, S>) {
+    return (constructor: K) => {
+      // TODO Check if registration already exists and warn if needed 
+
+      const transformator = Transformator.register<K>(constructor).setup(options);
+      const callbackQueue = Transformator.registrationCallbackQueue.get(constructor);
+      if (!callbackQueue) {
+        return;
+      }
+
+      for (const resolve of callbackQueue) {
+        resolve(transformator);
+      }
+
+      Transformator.registrationCallbackQueue.delete(constructor);
+    }
+  }
+
+  public static TransforamationException<T extends Constructor>() {
+    return (target: T, propertyKey: string) => {
+      const transformator = Transformator.get(target);
+      if (!transformator.propertyTransformationWhitelist.includes(propertyKey)) {
+        transformator.propertyTransformationMask.push(propertyKey);
+      }
+    }
+  }
+
+  public static Include() {
+    return Transformator.conditionalTransformationException(Transformator.PropertyTransformationMapping.Exclusion);
+  }
+
+  public static Exclude() {
+    return Transformator.conditionalTransformationException(Transformator.PropertyTransformationMapping.Inclusion);
+  }
+
+  public static ArgumentPassthrough<T extends object>(argumentIndex?: number) {
+    return (target: T, propertyKey: string) => {
+      // TODO Check if it is possible to add property passthrough and warn if needed
+
+      const resolver = (transformator: Transformator) => {
+        if (!argumentIndex) {
+          transformator.argumentPassthroughPropertyKeys.push(propertyKey);
+          return;
+        }
+
+        if (transformator.argumentPassthroughPropertyKeys[argumentIndex]) {
+          throw new ArgumentPassthroughIndexAlreadyExistsError(transformator.type, argumentIndex);
+        }
+
+        transformator.argumentPassthroughPropertyKeys[argumentIndex] = propertyKey;
+      }
+
+      Transformator.addRegistrationCallbackResolver(target.constructor, resolver);
+    }
+  }
+
+  private static addRegistrationCallbackResolver(identifier: Objectra.Identifier, callback: (transformator: Transformator) => void) {
+    const callbackQueue = Transformator.registrationCallbackQueue.get(identifier);
+    if (!callbackQueue) {
+      Transformator.registrationCallbackQueue.set(identifier, [callback]);
+      return;
+    }
+
+    callbackQueue.push(callback);
+  }
+
+  private static conditionalTransformationException<T extends object>(targetMapping: Transformator.PropertyTransformationMapping) {
+    return (target: T, propertyKey: string) => {
+      const resolver = (transformator: Transformator) => {
+        if (!transformator.propertyTransformationWhitelist.includes(propertyKey)) {
+          if (transformator.propertyTransformationMapping === targetMapping) {
+            transformator.propertyTransformationMask.push(propertyKey);
+          } else {
+            transformator.propertyTransformationWhitelist.push(propertyKey);
+          }
+        }
+      }
+      
+      Transformator.addRegistrationCallbackResolver(target.constructor, resolver);
+    }
   }
 }
 
@@ -218,18 +320,21 @@ export namespace Transformator {
   export interface SerializationBridge<Instance = unknown> {
     readonly objectrafy: Objectra.ValueSerialization;
     readonly instance: Instance;
+    readonly instanceTransformator: Transformator;
   }
 
   export interface InstantiationBridge<S, V> {
     readonly instantiate: Objectra.ValueInstantiation;
     readonly value: Objectra<Objectra.Content<S>>;
     readonly instance?: V;
+    readonly initialTransformator: Transformator;
   }
 
   export namespace Transformer {
     export interface SerializationBridge<InstanceType> {
       readonly serialize: (value: unknown) => Objectra;
       readonly instance: InstanceType;
+      readonly instanceTransformator: Transformator;
     }
 
     export interface InstantiationBridge<SerializedType, Instance> {
@@ -239,6 +344,7 @@ export namespace Transformator {
       readonly getRepresenterObjectra: Backloop.ResolveRepresenter;
       readonly getRepresenterValue: <T>(endpoint: Backloop.Reference<Objectra<T>>) => T;
       readonly instantiateRepresenter: <T>(endpoint: Backloop.Reference<Objectra<T>>) => T;
+      readonly initialTransformator: Transformator;
     }
 
     export type Serializator<Instance> = (bridge: SerializationBridge<Instance>) => Objectra.Content;
@@ -255,8 +361,15 @@ export namespace Transformator {
   export interface Options<V, S> extends Transformers<V, S> {
     readonly overload?: number;
     readonly argumentPassthrough?: boolean;
-    readonly typeIsNative?: boolean;
+    readonly ignoreDefaultArgumentBehaviour?: boolean;
+    readonly argumentPassthroughPropertyKeys?: string[];
+    readonly propertyTransformationMapping?: Transformator.PropertyTransformationMapping;
+    readonly propertyTransformationMask?: string[];
+    readonly propertyTransformationWhitelist?: string[];
   }
 
-  export type Identifier = Constructor | Function | string;
+  export enum PropertyTransformationMapping {
+    Inclusion = 'inclusion',
+    Exclusion = 'exclusion',
+  }
 }

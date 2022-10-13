@@ -1,5 +1,4 @@
 import type { IndexableObject } from "./types/util.types";
-import type { Backloop } from "./types/backloop.types";
 import { Transformator } from "./transformator";
 import { Objectra } from ".";
 
@@ -19,21 +18,21 @@ export const numberTransformator = Transformator.register(Number).setup<number |
 });
 
 export const bigintTransformator = Transformator.register(BigInt).setup<string, bigint>({
-  argumentPassthrough: true,
-  typeIsNative: true,
   serializator: ({ instance }) => instance.toString(),
+  ignoreDefaultArgumentBehaviour: true,
+  argumentPassthrough: true,
 });
 
 export const symbolTransformator = Transformator.register(Symbol).setup<string | undefined, symbol>({
-  argumentPassthrough: true,
-  typeIsNative: true,
   serializator: ({ instance }) => instance.description,
+  ignoreDefaultArgumentBehaviour: true,
+  argumentPassthrough: true,
 });
 
 export const dateTransformator = Transformator.register(Date).setup<string>({
-  typeIsNative: true,
-  argumentPassthrough: true,
   serializator: ({ instance }) => instance.toISOString(),
+  ignoreDefaultArgumentBehaviour: true,
+  argumentPassthrough: true,
 });
 
 export const arrayTransformator = Transformator.register(Array).setup<Objectra[]>({
@@ -44,12 +43,21 @@ export const arrayTransformator = Transformator.register(Array).setup<Objectra[]
 export const objectTransformator = Transformator.register(Object)
   .setup<IndexableObject<Objectra> | Array<Objectra>, IndexableObject | Array<unknown>>({
   instantiator: (bridge) => {
-    const { representer, instance, getRepresenterObjectra, getRepresenterValue, instantiateValue } = bridge;
+    const { 
+      instance, 
+      representer, 
+      initialTransformator,
+      getRepresenterObjectra, 
+      getRepresenterValue, 
+      instantiateValue, 
+    } = bridge;
+
     const value = getRepresenterValue(representer);
     if (Array.isArray(value)) {
       return arrayTransformator.instantiate!({ 
         instantiate: instantiateValue, 
         value: getRepresenterObjectra(representer),
+        initialTransformator,
       });
     }
 
@@ -61,10 +69,11 @@ export const objectTransformator = Transformator.register(Object)
 
     return result;
   },
-  serializator: ({ instance, serialize }) => {
+  serializator: ({ instance, serialize, instanceTransformator }) => {    
     const serializeArray = (array: unknown[]) => arrayTransformator.serialize!({
       instance: array,
       objectrafy: serialize,
+      instanceTransformator,
     });
 
     if (Array.isArray(instance)) {
@@ -78,8 +87,22 @@ export const objectTransformator = Transformator.register(Object)
     }
 
     const result: Objectra.Content<any> = {}
-    for (const key in instance) {
-      result[key] = serialize(instance[key]);
+    const serializeProperties = (keys: string[]) => {
+      for (const key of keys) {
+        result[key] = serialize(instance[key]);
+      }
+    }
+    
+    const propertyTransformationMask = instanceTransformator['propertyTransformationMask'];
+    const propertyTransformationWhitelist = instanceTransformator['propertyTransformationWhitelist'];
+    if (instanceTransformator['propertyTransformationMapping'] === Transformator.PropertyTransformationMapping.Inclusion) {
+      const keys = Object.getOwnPropertyNames(instance);
+      const inclusiveKeys = keys.filter(key => (
+        propertyTransformationWhitelist.includes(key) || !propertyTransformationMask.includes(key)
+      ));
+      serializeProperties(inclusiveKeys);
+    } else {
+      serializeProperties(propertyTransformationMask);
     }
 
     return result;
@@ -87,11 +110,11 @@ export const objectTransformator = Transformator.register(Object)
 });
 
 export const mapTransformator = Transformator.register(Map).setup({
+  ignoreDefaultArgumentBehaviour: true,
   argumentPassthrough: true,
-  typeIsNative: true,
 });
 
 export const setTransformator = Transformator.register(Set).setup({
+  ignoreDefaultArgumentBehaviour: true,
   argumentPassthrough: true,
-  typeIsNative: true,
 });

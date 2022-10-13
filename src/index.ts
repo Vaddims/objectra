@@ -15,12 +15,15 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 	private readonly name?: string;
 	private readonly type?: string;
 	private readonly overload?: number;
-	public readonly content: ContentType;
+	private readonly content: ContentType;
 
 	private constructor(init: Objectra.Init<ContentType>) {
 		const { identifier, content, overload } = init;
 		
-		this.overload = overload;
+		if (overload || overload === 0) {
+			this.overload = overload;
+		}
+
 		this.content = content;
 
 		if (typeof identifier === 'string') {
@@ -31,7 +34,10 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 	}
 
 	public static from<T>(value: T): Objectra<Objectra.Content<T>, T> {
+		// TODO Add reference serialization
+		
 		const objectraValueSerialization: Objectra.ValueSerialization = <T>(instance: T) => {
+			// TODO Make function serialization
 			if (typeof instance === 'undefined') {
 				return new Objectra<Objectra.Content<T>>({ content: undefined as Objectra.Content<any> });
 			}
@@ -46,7 +52,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				throw new Error(`Can not objectrafy an object inherited value without a constructor`);
 			}
 
-			const superTransformators = Transformator.getSuperClassTransformators(objectInstance.constructor as Constructor);
+			const superTransformators = Transformator.getSuperTransformators(objectInstance.constructor as Constructor);
 			const transformators = [...superTransformators];
 			
 			const instanceTransformator = Transformator.get(objectInstance.constructor);
@@ -54,11 +60,12 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				transformators.unshift(instanceTransformator);
 			}
 
-			for (const transfarmator of transformators) {
-				if (transfarmator.serialize) {
-					const objectraContent = transfarmator.serialize({
+			for (const transformator of transformators) {
+				if (transformator.serialize) {
+					const objectraContent = transformator.serialize({
 						instance: objectInstance,
 						objectrafy: objectraValueSerialization,
+						instanceTransformator,
 					}) as Objectra.Content<T>;
 
 					return new Objectra({ 
@@ -75,7 +82,11 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 	}
 
 	public instantiate(): InstanceType {
+		// TODO Add reference instantiation
+
 		const objectraValueInstantiation: Objectra.ValueInstantiation = (objectra) => {
+			// TODO Make function instantiation
+
 			if (objectra.name) {
 				const transformator = Transformator.get(objectra.name);
 
@@ -86,8 +97,11 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				return transformator.instantiate({
 					value: objectra,
 					instantiate: objectraValueInstantiation,
+					initialTransformator: transformator,
 				});
 			}
+
+			const { content } = objectra;
 
 			if (objectra.type) {
 				const transformator = Transformator.getByConstructorName(objectra.type, objectra.overload);
@@ -97,12 +111,13 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 						return transformator.instantiate({
 							value: objectra,
 							instantiate: objectraValueInstantiation,
+							initialTransformator: transformator,
 						});
 					}
 
-					const { content } = objectra;
-					const useForceArgumentPassthrough = transformator.ignoreDefaultTypeBehaviour && transformator.argumentPassthrough;
-					if (isPrimitive(content) && useForceArgumentPassthrough) {
+					const typeConstructorParams = transformator.type.length;
+					const useForceArgumentPassthrough = transformator.ignoreDefaultArgumentBehaviour && transformator.argumentPassthrough;
+					if (isPrimitive(content) && (typeConstructorParams === 1 || useForceArgumentPassthrough)) {
 						try {
 							return new transformator.type(content);
 						} catch (error) {
@@ -118,18 +133,53 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				}
 	
 				const typeConstructorParams = transformator.type.length;
-				if (!transformator.ignoreDefaultTypeBehaviour && !transformator.argumentPassthrough && typeConstructorParams) {
-					throw new InstantiationMethodDoesNotExistError(objectra.type);
-				}
+				// TODO Add check for transformator instantiation method
 	
-				const superTransformators = Transformator.getSuperClassTransformators(transformator.type);
+				const superTransformators = Transformator.getSuperTransformators(transformator.type);
 				for (const superTransfarmator of superTransformators) {
 					if (superTransfarmator.instantiate) {
-						const useForceArgumentPassthrough = transformator.ignoreDefaultTypeBehaviour && transformator.argumentPassthrough;
-						if (useForceArgumentPassthrough) {
+						// TODO Unify instantiation
+
+						if (transformator['argumentPassthroughPropertyKeys'].length > 0) {
+							const instantiationOptions = {
+								value: objectra,
+								instantiate: objectraValueInstantiation,
+								initialTransformator: transformator,
+							}
+							const value = superTransfarmator.instantiate(instantiationOptions);
+
+							const propKeys = transformator['argumentPassthroughPropertyKeys'];
+							const args = propKeys.map(key => value[key]);
+							
+							let instance;
+							try {
+								instance = new transformator.type(...args)
+							} catch (error) {
+								if (error instanceof TypeError) {
+									try {
+										instance = (transformator.type as Function)(...args);
+									} catch {}
+								} else {
+									throw new InvalidPassthroughArgumentError(objectra.type, error);
+								}
+							}
+
+							const unusedKeys = Object.keys(value).filter(key => 
+								!transformator['argumentPassthroughPropertyKeys'].includes(key)
+							);
+
+							for (const key of unusedKeys) {
+								instance[key] = value[key];
+							}
+
+							return instance;
+						}
+
+						if (transformator.argumentPassthrough && (transformator.ignoreDefaultArgumentBehaviour || typeConstructorParams === 1)) {
 							const value = superTransfarmator.instantiate({
 								value: objectra,
 								instantiate: objectraValueInstantiation,
+								initialTransformator: transformator,
 							});
 							
 							try {
@@ -144,13 +194,14 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 								throw new InvalidPassthroughArgumentError(objectra.type, error);
 							}
 						}
-	
+
 						if (typeConstructorParams === 0) {
 							const instance = new transformator.type();
 							superTransfarmator.instantiate({
 								value: objectra,
 								instantiate: objectraValueInstantiation,
 								instance,
+								initialTransformator: transformator,
 							});
 
 							return instance;
@@ -172,10 +223,11 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 	}
 
 	public static duplicate<T>(value: T) {
+		// TODO Overhaul and don't require function transformators
 		return Objectra.from(value).instantiate();
 	}
 
-	public createBackloopReferenceDuplex(): Objectra.BackloopDuplex<ContentType> {
+	private createBackloopReferenceDuplex(): Objectra.BackloopDuplex<ContentType> {
 		type Representer = {} | [];
 		const referenceMap = new Map<Representer, Objectra<any>>();
 
@@ -217,7 +269,14 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 }
 
 export namespace Objectra {
+	export type Identifier = Constructor | Function | string;
+
+	export type GetContentType<T extends Objectra> = T extends Objectra<infer U> ? U : never;
+	export type GetInstanceType<T extends Objectra> = T extends Objectra<any, infer U> ? U : never;
+
 	export type ContentStructure<T> = ES3Primitives | IndexableObject<T> | T[];
+
+	// TODO Prevent object methods from type mapping
 	export type Content<T = ContentStructure<Objectra>> = (
 		T extends ES3Primitives ?
 			T :
@@ -230,7 +289,7 @@ export namespace Objectra {
 	);
 
 	export interface Init<ContentType extends Objectra.Content<any>> {
-		readonly identifier?: Constructor | Function | string;
+		readonly identifier?: Identifier;
 		readonly id?: string;
 		readonly overload?: number;
 		readonly content: ContentType;

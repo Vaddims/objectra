@@ -13,6 +13,8 @@ export function objectHas(thisArg: unknown, v: PropertyKey) {
   return Object.prototype.hasOwnProperty.call(thisArg, v);
 }
 
+
+
 export function isPrimitive(value: unknown) {
   const primitiveTypes = ['undefined', 'string', 'number', 'symbol', 'bigint'];
   return value === null || primitiveTypes.includes(typeof value);
@@ -24,4 +26,6 @@ export function removeUndefinedProperties(value: IndexableObject<any>) {
       delete value[key];
     }
   }
+
+  return value;
 }

@@ -5,13 +5,13 @@ export namespace Backloop {
   export interface Endpoint<_ extends Objectra> {};
 
   export type Reference<T extends Objectra = Objectra> = (
-    T['content'] extends ES3Primitives ?
+    Objectra.GetContentType<T> extends ES3Primitives ?
       Endpoint<T> :
-      T['content'] extends Array<infer U> | ReadonlyArray<any> ?
+      Objectra.GetContentType<T> extends Array<infer U> | ReadonlyArray<any> ?
         U extends Objectra ?
           readonly Objectra<Reference<U>>[] :
-          { [K in ExtractArrayIndexes<T['content']>]: Reference<T['content'][K]> } :
-        { [K in keyof T['content']]: Reference<T['content'][K]> }
+          { [K in ExtractArrayIndexes<Objectra.GetContentType<T>>]: Reference<Objectra.GetContentType<T>[K]> } :
+        { [K in keyof Objectra.GetContentType<T>]: Reference<Objectra.GetContentType<T>[K]> }
   );
 
   export type ReferenceResolve<T extends Reference & { [key: string | number]: any }> = (
@@ -33,14 +33,7 @@ export namespace Backloop {
 	);
 
   export type ObjectReferenceResolve<T extends Reference & {[key: string | number]: Reference}> = { [K in keyof T]: ReferenceResolve<T[K]>};
-	// type b = Reference<Objectra<{ a: string, b: 'dsa' }>>;
-	// type c = ReferenceResolve<b>;
-	// type a = ObjectReferenceResolve<{ a: Objectra<string, number>, b: '' }>;
-
 	export type ResolveRepresenter = <T extends Backloop.Reference>(representer: T) => Backloop.ReferenceResolve<T>;
 	export type ReferenceDuplex<K, T> = readonly [Backloop.Reference<Objectra<K, T>>, ResolveRepresenter];
-
-	// type a = Reference<Objectra<string>>
-	// type r = ReferenceResolve<a>;
 }
 
