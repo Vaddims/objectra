@@ -1,7 +1,7 @@
 import { Backloop } from "./types/backloop.types";
 import { Constructor, ES3Primitives, ExtractArrayIndexes, IndexableObject, UnindexableArray } from "./types/util.types";
 import { Transformator } from "./transformator";
-import { isPrimitive } from "./utils";
+import { isClass, isPrimitive } from "./utils";
 import './transformators';
 import {
 	InvalidPassthroughArgumentError, 
@@ -87,49 +87,53 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		const objectraValueInstantiation: Objectra.ValueInstantiation = (objectra) => {
 			// TODO Make function instantiation
 
-			if (objectra.name) {
-				const transformator = Transformator.get(objectra.name);
+			const { name, type, overload, content } = objectra;
 
+			const createInstantiationBridge = (transformator: Transformator): Transformator.InstantiationBridge<any, any> => ({
+				value: objectra,
+				instantiate: objectraValueInstantiation,
+				initialTransformator: transformator,
+			});
+
+			if (name) {
+				const transformator = Transformator.get(name);
 				if (!transformator.instantiate) {
-					throw new InstantiationMethodDoesNotExistError(objectra.name);
+					throw new InstantiationMethodDoesNotExistError(name);
 				}
 
-				return transformator.instantiate({
-					value: objectra,
-					instantiate: objectraValueInstantiation,
-					initialTransformator: transformator,
-				});
+				return transformator.instantiate(createInstantiationBridge(transformator));
 			}
 
-			const { content } = objectra;
+			if (type) {
+				const transformator = Transformator.getByType(type, overload);
 
-			if (objectra.type) {
-				const transformator = Transformator.getByConstructorName(objectra.type, objectra.overload);
+				const constructType = (...typeArguments: unknown[]) => {
+					try {
+						if (isClass(transformator.type)) {
+							return new transformator.type(...typeArguments);
+						}
+
+						return transformator.type(...typeArguments);							
+					} catch (error) {
+						throw new InvalidPassthroughArgumentError(type, error);
+					}
+				}
 
 				if (transformator) {
 					if (transformator.instantiate) {
-						return transformator.instantiate({
-							value: objectra,
-							instantiate: objectraValueInstantiation,
-							initialTransformator: transformator,
-						});
+						return transformator.instantiate(createInstantiationBridge(transformator));
 					}
 
 					const typeConstructorParams = transformator.type.length;
 					const useForceArgumentPassthrough = transformator.ignoreDefaultArgumentBehaviour && transformator.argumentPassthrough;
 					if (isPrimitive(content) && (typeConstructorParams === 1 || useForceArgumentPassthrough)) {
-						try {
-							return new transformator.type(content);
-						} catch (error) {
-							if (error instanceof TypeError) {
-								try {
-									return (transformator.type as Function)(content);
-								} catch {}
-							}
-
-							throw new InvalidPassthroughArgumentError(objectra.type, error);
-						}
+						return constructType(content);
 					}
+				}
+
+				// TODO Overhaul
+				if (!isClass(transformator.type)) {
+					throw new Error(`Can not get superclasses of function`);
 				}
 	
 				const typeConstructorParams = transformator.type.length;
@@ -137,82 +141,51 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 	
 				const superTransformators = Transformator.getSuperTransformators(transformator.type);
 				for (const superTransfarmator of superTransformators) {
-					if (superTransfarmator.instantiate) {
-						// TODO Unify instantiation
+					if (!superTransfarmator.instantiate) {
+						continue;
+					}
 
-						if (transformator['argumentPassthroughPropertyKeys'].length > 0) {
-							const instantiationOptions = {
-								value: objectra,
-								instantiate: objectraValueInstantiation,
-								initialTransformator: transformator,
-							}
-							const value = superTransfarmator.instantiate(instantiationOptions);
+					if (transformator['argumentPassthroughPropertyKeys'].length > 0) {
+						const instantiationOptions = createInstantiationBridge(transformator);
+						const value = superTransfarmator.instantiate(instantiationOptions);
 
-							const propKeys = transformator['argumentPassthroughPropertyKeys'];
-							const args = propKeys.map(key => value[key]);
-							
-							let instance;
-							try {
-								instance = new transformator.type(...args)
-							} catch (error) {
-								if (error instanceof TypeError) {
-									try {
-										instance = (transformator.type as Function)(...args);
-									} catch {}
-								} else {
-									throw new InvalidPassthroughArgumentError(objectra.type, error);
-								}
-							}
+						const propKeys = transformator['argumentPassthroughPropertyKeys'];
+						const args = propKeys.map(key => value[key]);
+						
+						const instance = constructType(...args);
 
-							const unusedKeys = Object.keys(value).filter(key => 
-								!transformator['argumentPassthroughPropertyKeys'].includes(key)
-							);
+						// TODO Use transformator whitelist
+						const unusedKeys = Object.keys(value).filter(key => 
+							!transformator['argumentPassthroughPropertyKeys'].includes(key)
+						);
 
-							for (const key of unusedKeys) {
-								instance[key] = value[key];
-							}
-
-							return instance;
+						for (const key of unusedKeys) {
+							instance[key] = value[key];
 						}
 
-						if (transformator.argumentPassthrough && (transformator.ignoreDefaultArgumentBehaviour || typeConstructorParams === 1)) {
-							const value = superTransfarmator.instantiate({
-								value: objectra,
-								instantiate: objectraValueInstantiation,
-								initialTransformator: transformator,
-							});
-							
-							try {
-								return new transformator.type(value);
-							} catch (error) {
-								if (error instanceof TypeError) {
-									try {
-										return (transformator.type as Function)(value);
-									} catch {}
-								}
-	
-								throw new InvalidPassthroughArgumentError(objectra.type, error);
-							}
-						}
+						return instance;
+					}
 
-						if (typeConstructorParams === 0) {
-							const instance = new transformator.type();
-							superTransfarmator.instantiate({
-								value: objectra,
-								instantiate: objectraValueInstantiation,
-								instance,
-								initialTransformator: transformator,
-							});
+					if (transformator.argumentPassthrough && (transformator.ignoreDefaultArgumentBehaviour || typeConstructorParams === 1)) {
+						const value = superTransfarmator.instantiate(createInstantiationBridge(transformator));
+						return constructType(value);
+					}
 
-							return instance;
-						}
+					if (typeConstructorParams === 0) {
+						const instance = new transformator.type();
+						superTransfarmator.instantiate({
+							...createInstantiationBridge(transformator),
+							instance,
+						});
+
+						return instance;
 					}
 				}
 
-				throw new InvalidInstantiationArgumentQuantityError(objectra.type!);
+				throw new InvalidInstantiationArgumentQuantityError(type);
 			}
 
-			if (objectra.content === null) {
+			if (content === null) {
 				return null;
 			}
 
@@ -227,12 +200,12 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		return Objectra.from(value).instantiate();
 	}
 
-	private createBackloopReferenceDuplex(): Objectra.BackloopDuplex<ContentType> {
+	protected createBackloopReferenceDuplex(): Objectra.BackloopDuplex<ContentType> {
 		type Representer = {} | [];
 		const referenceMap = new Map<Representer, Objectra<any>>();
 
-		type ObjectraPreload = Objectra<Objectra.Content<any>>;
-		const createReference: Objectra.BackloopReferenceCreator = <T extends ObjectraPreload>(objectra: T) => {
+		type CommonObjectra = Objectra<Objectra.Content<any>>;
+		const createReference: Objectra.BackloopReferenceCreator = <T extends CommonObjectra>(objectra: T) => {
 			if (typeof objectra.content !== 'object' || objectra.content === null) {
 				const representer = {};
 				referenceMap.set(representer, objectra);

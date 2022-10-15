@@ -165,18 +165,18 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
     return transformator;
   }
 
-  public static findByConstructorName(name: string, overload?: number) {
+  public static findByType(name: string, overload?: number) {
     const transformator = Transformator.registrations.find(transformator =>
       typeof transformator.type === 'function' && 
       transformator.type.name === name && 
       transformator.overload === overload
     );
 
-    return transformator as Transformator<Constructor, any, any>;
+    return transformator as Transformator<Constructor | Function, any, any>;
   }
 
-  public static getByConstructorName(name: string, overload?: number) {
-    const transformator = Transformator.findByConstructorName(name, overload);
+  public static getByType(name: string, overload?: number) {
+    const transformator = Transformator.findByType(name, overload);
     if (!transformator) {
       throw new TransformatorNotFoundError(name);
     }
