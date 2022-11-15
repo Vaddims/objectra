@@ -1,4 +1,4 @@
-import type { Constructor, IndexableObject } from "./types/util.types";
+import type { Constructor, IndexableObject, ES5Primitives } from "./types/util.types";
 
 export function* getConstructorSuperConstructors(instance: Constructor) {
   let constructor = instance;
@@ -13,8 +13,8 @@ export function objectHas(thisArg: unknown, v: PropertyKey) {
   return Object.prototype.hasOwnProperty.call(thisArg, v);
 }
 
-export function isPrimitive(value: unknown) {
-  const primitiveTypes = ['undefined', 'string', 'number', 'symbol', 'bigint'];
+export function isPrimitive(value: unknown): value is ES5Primitives {
+  const primitiveTypes = ['undefined', 'string', 'number', 'boolean', 'symbol', 'bigint'];
   return value === null || primitiveTypes.includes(typeof value);
 }
 
@@ -63,4 +63,8 @@ export function isClass(value: Function): value is Constructor {
   } else {
     return functionType(value) === FunctionType.Constructor;
   }
+}
+
+export function everyArrayElementIsEqual(array: unknown[]) {
+  return array.every(element => array[0] === element);
 }

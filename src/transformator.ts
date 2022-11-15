@@ -116,7 +116,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
     const representer = backloopRepresenter;
     const instantiateValue = instantiate;
     const getRepresenterObjectra = resolve;
-    const getRepresenterValue = <T>(endpoint: Backloop.Reference<Objectra<T>>): T => (<Objectra<T, any>>getRepresenterObjectra(endpoint))['content'];
+    const getRepresenterValue = <T>(endpoint: Backloop.Reference<Objectra<T>>): T => (<Objectra<T, any>>getRepresenterObjectra(endpoint))['content']!;
     const instantiateRepresenter = <K>(endpoint: Backloop.Reference<Objectra<K>>): K => instantiateValue(getRepresenterObjectra(endpoint));
 
     try {
@@ -158,6 +158,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
 
   public static get(identifier: Objectra.Identifier, overload?: number) {
     const transformator = Transformator.find(identifier, overload);
+    // console.log('get ', Transformator.typeToString(identifier), typeof identifier, 'resulted to', !!transformator)
     if (!transformator) {
       throw new TransformatorNotFoundError(identifier);
     }
@@ -200,6 +201,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
       throw new TransformatorAlreadyRegisteredError(identifier);
     }
 
+    // console.log('registered ', Transformator.typeToString(identifier))
     const transformator = new Transformator(identifier);
     Transformator.registrations.push(transformator);
     return transformator;
