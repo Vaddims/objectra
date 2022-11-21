@@ -45,6 +45,7 @@ export const objectTransformator = Transformator.register(Object)
   instantiator: (bridge) => {
     const { 
       instance, 
+      keyPath,
       representer, 
       initialTransformator,
       getRepresenterObjectra, 
@@ -58,18 +59,22 @@ export const objectTransformator = Transformator.register(Object)
         instantiate: instantiateValue, 
         value: getRepresenterObjectra(representer),
         initialTransformator,
+        keyPath,
+        
       });
     }
 
     const result = (instance ?? {}) as IndexableObject;
     for (const key in value) {
       const element = (value as any)[key];
+      keyPath.push(key);
       result[key] = instantiateValue(element);
+      keyPath.pop();
     }
 
     return result;
   },
-  serializator: ({ instance, serialize, instanceTransformator }) => {    
+  serializator: ({ instance, serialize, instanceTransformator, useSerializationSymbolIterator }) => {    
     const serializeArray = (array: unknown[]) => arrayTransformator.serialize!({
       instance: array,
       objectrafy: serialize,
@@ -80,7 +85,7 @@ export const objectTransformator = Transformator.register(Object)
       return serializeArray(instance);
     }
 
-    if (typeof instance[Symbol.iterator] === 'function') {
+    if (useSerializationSymbolIterator && typeof instance[Symbol.iterator] === 'function') {
       const iterableInstance = instance as IndexableObject<any> as Iterable<any>;
       const array = Array.from(iterableInstance);
       return serializeArray(array);
@@ -112,9 +117,15 @@ export const objectTransformator = Transformator.register(Object)
 export const mapTransformator = Transformator.register(Map).setup({
   ignoreDefaultArgumentBehaviour: true,
   argumentPassthrough: true,
+  useSerializationSymbolIterator: true,
+  getter: (target, key) => target.get(key),
+  setter: (target, key, value) => target.set(key, value),
 });
 
 export const setTransformator = Transformator.register(Set).setup({
   ignoreDefaultArgumentBehaviour: true,
   argumentPassthrough: true,
+  useSerializationSymbolIterator: true,
+  getter: (target, key) => target.get(key),
+  setter: (target, _, value) => target.add(value),
 });

@@ -23,6 +23,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
   public readonly argumentPassthrough: boolean;
   public readonly ignoreDefaultArgumentBehaviour: boolean;
   private readonly transformers: Transformator.Transformers<InstanceType, SerializationType>;
+  private readonly useSerializationSymbolIterator: boolean;
 
   private argumentPassthroughPropertyKeys: string[]; // Not uncombinable with global argumentPassthrough
   private propertyTransformationMapping: Transformator.PropertyTransformationMapping;
@@ -40,15 +41,19 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
       argumentPassthroughPropertyKeys = [],
       ignoreDefaultArgumentBehaviour = false,
       propertyTransformationMapping = Transformator.PropertyTransformationMapping.Inclusion,
+      useSerializationSymbolIterator = false,
       serializator,
       instantiator,
+      setter = Reflect.set as unknown as Transformator.Transformer.Setter<InstanceType>,
+      getter = Reflect.get as unknown as Transformator.Transformer.Getter<InstanceType>,
     } = options;
 
     this.type = type;
     this.overload = overload;
     this.argumentPassthrough = argumentPassthrough;
     this.ignoreDefaultArgumentBehaviour = ignoreDefaultArgumentBehaviour;
-    this.transformers = { serializator, instantiator };
+    this.useSerializationSymbolIterator = useSerializationSymbolIterator;
+    this.transformers = { serializator, instantiator, getter, setter };
     
     this.propertyTransformationMapping = propertyTransformationMapping;
     this.propertyTransformationMask = propertyTransformationMask;
@@ -95,6 +100,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
         instance,
         serialize: objectrafy,
         instanceTransformator,
+        useSerializationSymbolIterator: instanceTransformator.useSerializationSymbolIterator
       });
     } catch (error) {
       if (error instanceof RangeError) {
@@ -110,7 +116,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
       throw new InstantiationMethodDoesNotExistError(this.identifierToString());
     }
 
-    const { value, instantiate, instance, initialTransformator = this } = bridge;
+    const { value, instantiate, instance, initialTransformator = this, keyPath } = bridge;
     const [backloopRepresenter, resolve] = value['createBackloopReferenceDuplex']();
 
     const representer = backloopRepresenter;
@@ -128,6 +134,8 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
         getRepresenterValue,
         instantiateRepresenter,
         initialTransformator,
+        keyPath,
+        useSerializationSymbolIterator: this.useSerializationSymbolIterator,
       });
     } catch (error) {
       if (error instanceof RangeError) {
@@ -136,6 +144,14 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
 
       throw error;
     }
+  }
+
+  get getter() {
+    return this.transformers.getter;
+  }
+
+  get setter() {
+    return this.transformers.setter;
   }
 
   public static readonly registrations: Transformator<any, any>[] = [];
@@ -330,13 +346,18 @@ export namespace Transformator {
     readonly value: Objectra<Objectra.Content<S>>;
     readonly instance?: V;
     readonly initialTransformator: Transformator;
+    readonly keyPath: string[];
   }
 
   export namespace Transformer {
+    export type Setter<T> = (target: T, key: any, value: any, receiver?: any) => void;
+    export type Getter<T> = (target: T, key: any, receiver?: any) => unknown;
+    
     export interface SerializationBridge<InstanceType> {
       readonly serialize: (value: unknown) => Objectra;
       readonly instance: InstanceType;
       readonly instanceTransformator: Transformator;
+      readonly useSerializationSymbolIterator: boolean;
     }
 
     export interface InstantiationBridge<SerializedType, Instance> {
@@ -347,6 +368,8 @@ export namespace Transformator {
       readonly getRepresenterValue: <T>(endpoint: Backloop.Reference<Objectra<T>>) => T;
       readonly instantiateRepresenter: <T>(endpoint: Backloop.Reference<Objectra<T>>) => T;
       readonly initialTransformator: Transformator;
+      readonly keyPath: string[];
+      readonly useSerializationSymbolIterator: boolean;
     }
 
     export type Serializator<Instance> = (bridge: SerializationBridge<Instance>) => Objectra.Content;
@@ -358,6 +381,8 @@ export namespace Transformator {
   export interface Transformers<Instance, Serialized> {
     readonly serializator?: Transformer.Serializator<Instance>;
     readonly instantiator?: Transformer.Instantiator<Serialized, Instance>;
+    readonly setter?: Transformer.Setter<Instance>;
+    readonly getter?: Transformer.Getter<any>;
   }
 
   export interface Options<V, S> extends Transformers<V, S> {
@@ -368,6 +393,7 @@ export namespace Transformator {
     readonly propertyTransformationMapping?: Transformator.PropertyTransformationMapping;
     readonly propertyTransformationMask?: string[];
     readonly propertyTransformationWhitelist?: string[];
+    readonly useSerializationSymbolIterator?: boolean;
   }
 
   export enum PropertyTransformationMapping {
