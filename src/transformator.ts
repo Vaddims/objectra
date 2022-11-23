@@ -1,6 +1,6 @@
 import { Objectra } from ".";
-import { getConstructorSuperConstructors } from './utils';
-import type { Constructor } from "./types/util.types";
+import { getConstructorSuperConstructors, isClass } from './utils';
+import type { Constructor, Writeable } from "./types/util.types";
 import { 
   ArgumentPassthroughIndexAlreadyExistsError,
   InstantiationMethodDoesNotExistError, 
@@ -9,61 +9,79 @@ import {
   SelfSerializationError, 
   SerializationMethodDoesNotExistError, 
   TransformatorAlreadyRegisteredError, 
-  TransformatorNotFoundError 
+  TransformatorAlreadyConfiguredError, 
+  TransformatorNotFoundError, 
+  ArgumentPassthroughIncompatiblanceError
 } from "./errors";
-import { Backloop } from "./types/backloop.types";
+import type { Backloop } from "./types/backloop.types";
 
 type IdentifierInstance<RegistrationIdentifier> = RegistrationIdentifier extends Constructor 
   ? InstanceType<RegistrationIdentifier> 
   : RegistrationIdentifier;
 
 export class Transformator<IdentifierType extends Objectra.Identifier = Objectra.Identifier, InstanceType = any, SerializationType = any> {
+  // Identifiers
   public readonly type: IdentifierType;
-  public readonly overload?: number;
+  public readonly creationMethod: Transformator.CreationMethod;
+  public readonly overload: number | undefined;
+  
+  // Argument grouping
   public readonly argumentPassthrough: boolean;
   public readonly ignoreDefaultArgumentBehaviour: boolean;
-  private readonly transformers: Transformator.Transformers<InstanceType, SerializationType>;
-  private readonly useSerializationSymbolIterator: boolean;
+  public readonly argumentPassthroughPropertyKeys: readonly string[]; // Not uncombinable with global argumentPassthrough
+  
+  // Property seperation
+  public readonly propertyTransformationMask: readonly string[];
+  public readonly propertyTransformationWhitelist: readonly string[]; // Higher priority over the the transformation mask
+  public readonly propertyTransformationMapping: Transformator.PropertyTransformationMapping;
+  
+  // Branching
+  public readonly useSerializationSymbolIterator: boolean;
+  private readonly branchedProperties: readonly (keyof Transformator.ConfigOptions<InstanceType, SerializationType>)[] = [];
+  private configurable = true;
 
-  private argumentPassthroughPropertyKeys: string[]; // Not uncombinable with global argumentPassthrough
-  private propertyTransformationMapping: Transformator.PropertyTransformationMapping;
+  // transformers
+  private readonly serializator: Transformator.Transformers<InstanceType, SerializationType>['serializator'];
+  private readonly instantiator: Transformator.Transformers<InstanceType, SerializationType>['instantiator'];
+  private readonly getter: Transformator.Transformers<InstanceType, SerializationType>['getter'];
+  private readonly setter: Transformator.Transformers<InstanceType, SerializationType>['setter'];
 
-  private propertyTransformationWhitelist: string[]; // Higher priority over the the transformation mask
-  private propertyTransformationMask: string[];
+  // * Static Properties
+  public static readonly staticRegistrations: Transformator[] = [];
+  // Use weak map to prevent memory leak in cases when objectra serializes scoped funcitons
+  public static readonly dynamicRegistrations = new WeakMap<Constructor | Function, Transformator>();
+  // Used commonly for decorator registrations their configs
+  private static readonly registrationCallbackQueueMap: Transformator.RegistrationCallbackQueueMap = new Map();
 
+  private constructor(options: Transformator.InitOptions<IdentifierType, InstanceType, SerializationType>) {
+    this.type = options.type;
+    this.creationMethod = options.creationMethod;
+    this.overload = options.overload;
 
-  private constructor(type: IdentifierType, options: Transformator.Options<InstanceType, SerializationType> = {}) {
-    const { 
-      overload, 
-      argumentPassthrough = false, 
-      propertyTransformationMask = [],
-      propertyTransformationWhitelist = [],
-      argumentPassthroughPropertyKeys = [],
-      ignoreDefaultArgumentBehaviour = false,
-      propertyTransformationMapping = Transformator.PropertyTransformationMapping.Inclusion,
-      useSerializationSymbolIterator = false,
-      serializator,
-      instantiator,
-      setter = Reflect.set as unknown as Transformator.Transformer.Setter<InstanceType>,
-      getter = Reflect.get as unknown as Transformator.Transformer.Getter<InstanceType>,
-    } = options;
-
-    this.type = type;
-    this.overload = overload;
-    this.argumentPassthrough = argumentPassthrough;
-    this.ignoreDefaultArgumentBehaviour = ignoreDefaultArgumentBehaviour;
-    this.useSerializationSymbolIterator = useSerializationSymbolIterator;
-    this.transformers = { serializator, instantiator, getter, setter };
+    this.argumentPassthrough = options.argumentPassthrough ?? false;
+    this.ignoreDefaultArgumentBehaviour = options.ignoreDefaultArgumentBehaviour ?? false;
+    this.argumentPassthroughPropertyKeys = Array.from(options.argumentPassthroughPropertyKeys ?? []);
     
-    this.propertyTransformationMapping = propertyTransformationMapping;
-    this.propertyTransformationMask = propertyTransformationMask;
-    this.propertyTransformationWhitelist = propertyTransformationWhitelist;
+    this.propertyTransformationMask = options.propertyTransformationMask ?? [];
+    this.propertyTransformationWhitelist = options.propertyTransformationWhitelist ?? [];
+    this.propertyTransformationMapping = options.propertyTransformationMapping ?? Transformator.PropertyTransformationMapping.Inclusion;
 
-    this.argumentPassthroughPropertyKeys = [...argumentPassthroughPropertyKeys];
+    this.useSerializationSymbolIterator = options.useSerializationSymbolIterator ?? false;
 
-    if (!this.ignoreDefaultArgumentBehaviour && !this.transformers.instantiator && this.argumentPassthrough && typeof this.type === 'function' && this.type.length > 1) {
+    this.serializator = options.serializator;
+    this.instantiator = options.instantiator;
+    this.getter = options.getter;
+    this.setter = options.setter;
+
+    this.branchedProperties = [...options.branchedProperties];
+    
+    if (!this.ignoreDefaultArgumentBehaviour && !this.instantiator && this.argumentPassthrough && typeof this.type === 'function' && this.type.length > 1) {
       throw new InvalidInstantiationArgumentQuantityError(this.identifierToString());
     }
+  }
+
+  public static typeToString(identifer: Objectra.Identifier) {
+    return typeof identifer === 'string' ? identifer : identifer.name;
   }
 
   public identifierToString() {
@@ -73,7 +91,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
   }
   
   public get serialize() {
-    if (!this.transformers.serializator) {
+    if (!this.serializator) {
       return;
     }
     
@@ -81,7 +99,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
   }
 
   public get instantiate() {
-    if (!this.transformers.instantiator) {
+    if (!this.instantiator) {
       return;
     }
 
@@ -89,14 +107,14 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
   }
 
   private serializationProxy<T extends InstanceType>(bridge: Transformator.SerializationBridge<T>): Objectra.Content {
-    if (!this.transformers.serializator) {
+    if (!this.serializator) {
       throw new SerializationMethodDoesNotExistError(this.identifierToString());
     }
 
     const { instance, objectrafy, instanceTransformator = this } = bridge;
 
     try {
-      return this.transformers.serializator({
+      return this.serializator({
         instance,
         serialize: objectrafy,
         instanceTransformator,
@@ -112,7 +130,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
   }
 
   private instantiationProxy(bridge: Transformator.InstantiationBridge<SerializationType, InstanceType>): InstanceType {
-    if (!this.transformers.instantiator) {
+    if (!this.instantiator) {
       throw new InstantiationMethodDoesNotExistError(this.identifierToString());
     }
 
@@ -126,7 +144,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
     const instantiateRepresenter = <K>(endpoint: Backloop.Reference<Objectra<K>>): K => instantiateValue(getRepresenterObjectra(endpoint));
 
     try {
-      return this.transformers.instantiator({
+      return this.instantiator({
         representer,
         instance,
         instantiateValue,
@@ -146,87 +164,14 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
     }
   }
 
-  get getter() {
-    return this.transformers.getter;
-  }
-
-  get setter() {
-    return this.transformers.setter;
-  }
-
-  public static readonly registrations: Transformator<any, any>[] = [];
-  private static readonly registrationCallbackQueue = new Map<Objectra.Identifier, ((transformator: Transformator) => void)[]>();
-
-  public static registrationExists(identifier: Objectra.Identifier, overload?: number) {
-    return Transformator.registrations.some((transformator) => transformator.type === identifier && transformator.overload === overload);
-  }
-
-  public static find(identifier: Objectra.Identifier, overload?: number) {
-    if (typeof identifier === 'function') {
-      return Transformator.registrations.find(transformator => transformator.type === identifier);
-    }
-
-    return Transformator.registrations.find((transformator) => 
-      transformator.type === identifier &&
-      transformator.overload === overload
-    );
-  }
-
-  public static get(identifier: Objectra.Identifier, overload?: number) {
-    const transformator = Transformator.find(identifier, overload);
-    // console.log('get ', Transformator.typeToString(identifier), typeof identifier, 'resulted to', !!transformator)
-    if (!transformator) {
-      throw new TransformatorNotFoundError(identifier);
-    }
-
-    return transformator;
-  }
-
-  public static findByType(name: string, overload?: number) {
-    const transformator = Transformator.registrations.find(transformator =>
-      typeof transformator.type === 'function' && 
-      transformator.type.name === name && 
-      transformator.overload === overload
-    );
-
-    return transformator as Transformator<Constructor | Function, any, any>;
-  }
-
-  public static getByType(name: string, overload?: number) {
-    const transformator = Transformator.findByType(name, overload);
-    if (!transformator) {
-      throw new TransformatorNotFoundError(name);
-    }
-
-    return transformator;
-  }
-
-  public static getSuperTransformators = function*(constructor: Constructor) {
-    const superConstructors = getConstructorSuperConstructors(constructor);
-
-    for (const superConstructor of superConstructors) {
-      const superTransformator = Transformator.find(superConstructor);
-      if (superTransformator) {
-        yield superTransformator;
-      }
-    }
-  }
-  
-  public static register<RegistrationIdentifier extends Objectra.Identifier>(identifier: RegistrationIdentifier) {
-    if (Transformator.registrationExists(identifier)) {
-      throw new TransformatorAlreadyRegisteredError(identifier);
-    }
-
-    // console.log('registered ', Transformator.typeToString(identifier))
-    const transformator = new Transformator(identifier);
-    Transformator.registrations.push(transformator);
-    return transformator;
-  }
-
-  public setup<SerializedStructure, RegistrationIdentifier = IdentifierType>(
-    options: Transformator.Options<IdentifierInstance<RegistrationIdentifier>, SerializedStructure> = {}, //SetupOptions<RegistrationIdentifier, SerializedStructure> = {},
+  public configure<SerializedStructure, RegistrationIdentifier = IdentifierType>(
+    options: Transformator.ConfigOptions<IdentifierInstance<RegistrationIdentifier>, SerializedStructure> = {},
   ) {
-    const transformatorIndex = Transformator.registrations.findIndex(
+    if (!this.configurable) {
+      throw new TransformatorAlreadyConfiguredError(this.type);
+    }
+
+    const transformatorIndex = Transformator.staticRegistrations.findIndex(
       transformator => transformator.type === this.type && transformator.overload === this.overload
     );
 
@@ -234,107 +179,304 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
       throw new TransformatorNotFoundError(this.type);
     }
 
-    if (typeof this.type === 'string') {
-      const transformator = new Transformator<IdentifierType, IdentifierInstance<RegistrationIdentifier>, SerializedStructure>(this.type, options);
-      Transformator.registrations[transformatorIndex] = transformator;
-      return transformator;
-    }
+    const splittedConfigOptions = Transformator.splitConfigOptions(options);
+    const transformator = Transformator.createInherited<IdentifierType, IdentifierInstance<RegistrationIdentifier>, SerializedStructure>({
+      type: this.type,
+      creationMethod: Transformator.CreationMethod.Manual,
+      ...splittedConfigOptions,
+    });
 
-    // TODO Check if instantiation method is required and throw an error if needed
-
-    const transformator = new Transformator<IdentifierType, IdentifierInstance<RegistrationIdentifier>, SerializedStructure>(this.type, options);
-    Transformator.registrations[transformatorIndex] = transformator;
+    this.configurable = false;
+    Transformator.staticRegistrations[transformatorIndex] = transformator;
     return transformator;
   }
 
-  public static typeToString(identifer: Objectra.Identifier) {
-    return typeof identifer === 'string' ? identifer : identifer.name;
+  public getSpecificationOptions(): Transformator.SpecificationOptions {
+    return {
+      argumentPassthrough: this.argumentPassthrough,
+      ignoreDefaultArgumentBehaviour: this.ignoreDefaultArgumentBehaviour,
+      argumentPassthroughPropertyKeys: Array.from(this.argumentPassthroughPropertyKeys),
+      propertyTransformationMask: Array.from(this.propertyTransformationMask),
+      propertyTransformationWhitelist: Array.from(this.propertyTransformationWhitelist),
+      propertyTransformationMapping: this.propertyTransformationMapping,
+      useSerializationSymbolIterator: this.useSerializationSymbolIterator,
+    }
   }
 
-  public static Register<T = unknown, S = any, K extends Constructor = Constructor<T>>(options?: Transformator.Options<IdentifierInstance<K>, S>) {
-    return (constructor: K) => {
-      // TODO Check if registration already exists and warn if needed 
+  private static splitConfigOptions<V, S>(options: Transformator.ConfigOptions<V, S>): Transformator.ConfigOptionsSplitted<V, S> {
+    const { serializator, instantiator, getter, setter, ...specifications } = options;
 
-      const transformator = Transformator.register<K>(constructor).setup(options);
-      const callbackQueue = Transformator.registrationCallbackQueue.get(constructor);
+    return {
+      specifications,
+      transformers: { serializator, instantiator, getter, setter },
+    }
+  }
+
+  private static getIdentifierConstructor(identifer: Objectra.Identifier): Constructor {
+    if (typeof identifer === 'string') {
+      return Object;
+    }
+
+    if (isClass(identifer)) {
+      return identifer;
+    }
+
+    return Function;
+  }
+
+  // #region Registration utilities
+  private static isDescribable<T extends Objectra.Identifier>(identifier: T, overload?: number) {
+    return (transformator: Transformator): transformator is Transformator<T> => (
+      (typeof identifier === 'function' || transformator.overload === overload)
+      && transformator.type === identifier
+    )
+  }
+
+  public static exists(identifier: Objectra.Identifier, overload?: number) {
+    const staticRegistrationExist = Transformator.staticRegistrations.some(Transformator.isDescribable(identifier, overload));
+    if (staticRegistrationExist || typeof identifier === 'string') {
+      return staticRegistrationExist;
+    }
+
+    return Transformator.dynamicRegistrations.has(identifier);
+  }
+
+  public static findStaticByStringType(name: string, overload?: number) {
+    return Transformator.staticRegistrations.find(transformator =>
+      typeof transformator.type === 'function' && 
+      transformator.type.name === name && 
+      transformator.overload === overload
+    ) as Transformator<Constructor | Function>;
+  }
+
+  public static getStaticByStringType(name: string, overload?: number) {
+    const transformator = Transformator.findStaticByStringType(name, overload);
+    if (!transformator) {
+      throw new TransformatorNotFoundError(name);
+    }
+
+    return transformator;
+  }
+
+  public static findStatic<T extends Objectra.Identifier>(identifier: T, overload?: number) {
+    return Transformator.staticRegistrations.find(Transformator.isDescribable(identifier, overload));
+  }
+
+  public static getStatic<T extends Objectra.Identifier>(identifier: T, overload?: number) {
+    const transformator = Transformator.findStatic(identifier, overload);
+    if (!transformator) {
+      throw new TransformatorNotFoundError(identifier);
+    }
+
+    return transformator;
+  }
+
+  // Finds transformator in static and dynamic registrations
+  public static findAvailable<T extends Objectra.Identifier>(identifier: T, overload?: number) {
+    if (typeof identifier !== 'string') {
+      const transformator = Transformator.dynamicRegistrations.get(identifier);
+      if (transformator) {
+        return transformator as Transformator<T>;
+      }
+    }
+
+    return Transformator.findStatic(identifier, overload);
+  }
+
+  public static getAvailable<T extends Objectra.Identifier>(identifier: T, overload?: number) {
+    const transformator = Transformator.findAvailable(identifier, overload);
+    if (!transformator) {
+      throw new TransformatorNotFoundError(identifier);
+    }
+
+    return transformator;
+  }
+
+  public static get<T extends Function | Constructor>(identifier: T, overload?: number) {
+    const staticTransformator = Transformator.findStatic(identifier, overload);
+    return staticTransformator ?? Transformator.registerDynamic(identifier);
+  }
+
+  public static *getSuperTransformators(constructor: Constructor) {
+    const superConstructors = getConstructorSuperConstructors(constructor);
+    for (const superConstructor of superConstructors) {
+      const superTransformator = Transformator.findAvailable(superConstructor);
+      if (superTransformator) {
+        yield superTransformator;
+      }
+    }
+  }
+
+  public static getParentTransformator(constructor: Constructor) {
+    const superTransfarmators = Transformator.getSuperTransformators(constructor);
+    return superTransfarmators.next().value;
+  }
+
+  private static createInherited<T extends Objectra.Identifier, V, S>(options: Transformator.InheritedInitOptions<T, V, S>): Transformator<T, V, S> {
+    const typeConstructor = Transformator.getIdentifierConstructor(options.type);
+    const parentTransformator = Transformator.getParentTransformator(typeConstructor);
+    const parentSpecifications = parentTransformator?.getSpecificationOptions();
+    const specifications = options.specifications ?? {};
+
+    const transformator = new Transformator({
+      ...parentSpecifications,
+      ...specifications,
+      ...options.transformers,
+      branchedProperties: Object.keys(specifications) as (keyof Transformator.ConfigOptions<V, S>)[],
+      creationMethod: options.creationMethod,
+      type: options.type,
+    });
+
+    return transformator;
+  }
+
+  public static register<RegistrationIdentifier extends Objectra.Identifier>(identifier: RegistrationIdentifier) {
+    if (Transformator.exists(identifier)) {
+      throw new TransformatorAlreadyRegisteredError(identifier);
+    }
+
+    const transformator = Transformator.createInherited({
+      creationMethod: Transformator.CreationMethod.Manual,
+      type: identifier,
+    });
+
+    Transformator.staticRegistrations.push(transformator);
+    return transformator;
+  }
+
+  public static registerDynamic<T extends Constructor | Function>(identifier: T) {
+    const transformator = Transformator.createInherited({
+      creationMethod: Transformator.CreationMethod.Dynamic,
+      type: identifier,
+    });
+
+
+    Transformator.dynamicRegistrations.set(identifier, transformator);
+    return transformator;
+  }
+  // #endregion
+
+  // #region Decorators
+  public static Register<T = unknown, S = any, K extends Constructor = Constructor<T>>(options: Transformator.ConfigOptions<IdentifierInstance<K>, S> = {}) {
+    return (constructor: K) => {
+      if (Transformator.exists(constructor)) {
+        throw new TransformatorAlreadyRegisteredError(constructor);
+      }
+
+      const callbackQueue = Transformator.registrationCallbackQueueMap.get(constructor);
       if (!callbackQueue) {
         return;
       }
 
+      Transformator.registrationCallbackQueueMap.delete(constructor);
+      
       for (const resolve of callbackQueue) {
-        resolve(transformator);
+        const resolvedConfigOptions = resolve({ ...options });
+        options = Object.assign(options, resolvedConfigOptions);
       }
 
-      Transformator.registrationCallbackQueue.delete(constructor);
+      const transformator = Transformator.createInherited({
+        type: constructor,
+        creationMethod: Transformator.CreationMethod.Manual,
+        ...Transformator.splitConfigOptions(options),
+      });
+
+      Transformator.staticRegistrations.push(transformator);
     }
   }
 
-  public static TransforamationException<T extends Constructor>() {
-    return (target: T, propertyKey: string) => {
-      const transformator = Transformator.get(target);
-      if (!transformator.propertyTransformationWhitelist.includes(propertyKey)) {
-        transformator.propertyTransformationMask.push(propertyKey);
-      }
-    }
+  public static TransforamationException() {
+    return Transformator.conditionalTransformationException();
   }
 
   public static Include() {
-    return Transformator.conditionalTransformationException(Transformator.PropertyTransformationMapping.Exclusion);
+    return Transformator.conditionalTransformationException(Transformator.PropertyTransformationMapping.Inclusion);
   }
 
   public static Exclude() {
-    return Transformator.conditionalTransformationException(Transformator.PropertyTransformationMapping.Inclusion);
+    return Transformator.conditionalTransformationException(Transformator.PropertyTransformationMapping.Exclusion);
   }
 
   public static ArgumentPassthrough<T extends object>(argumentIndex?: number) {
     return (target: T, propertyKey: string) => {
-      // TODO Check if it is possible to add property passthrough and warn if needed
+      const resolver = (options: Transformator.ConfigOptions<any, any>) => {
+        if (options.argumentPassthrough) {
+          throw new ArgumentPassthroughIncompatiblanceError(target as Objectra.Identifier);
+        }
+        
+        const customOptions = {
+          argumentPassthroughPropertyKeys: Array.from(options.argumentPassthroughPropertyKeys ?? [])
+        } as const;
 
-      const resolver = (transformator: Transformator) => {
         if (!argumentIndex) {
-          transformator.argumentPassthroughPropertyKeys.push(propertyKey);
-          return;
+          customOptions.argumentPassthroughPropertyKeys.push(propertyKey);
+          return customOptions;
         }
 
-        if (transformator.argumentPassthroughPropertyKeys[argumentIndex]) {
-          throw new ArgumentPassthroughIndexAlreadyExistsError(transformator.type, argumentIndex);
+        if (customOptions.argumentPassthroughPropertyKeys[argumentIndex]) {
+          throw new ArgumentPassthroughIndexAlreadyExistsError(target as Objectra.Identifier, argumentIndex);
         }
 
-        transformator.argumentPassthroughPropertyKeys[argumentIndex] = propertyKey;
+        customOptions.argumentPassthroughPropertyKeys[argumentIndex] = propertyKey;
+        return customOptions;
       }
 
       Transformator.addRegistrationCallbackResolver(target.constructor, resolver);
     }
   }
+  // #endregion
 
-  private static addRegistrationCallbackResolver(identifier: Objectra.Identifier, callback: (transformator: Transformator) => void) {
-    const callbackQueue = Transformator.registrationCallbackQueue.get(identifier);
-    if (!callbackQueue) {
-      Transformator.registrationCallbackQueue.set(identifier, [callback]);
+  // #region Decorator helpers
+  private static addRegistrationCallbackResolver(identifier: Objectra.Identifier, callback: Transformator.RegistrationCallback) {
+    const registrationCallbackQueue = Transformator.registrationCallbackQueueMap.get(identifier);
+    if (!registrationCallbackQueue) {
+      Transformator.registrationCallbackQueueMap.set(identifier, [callback]);
       return;
     }
 
-    callbackQueue.push(callback);
+    registrationCallbackQueue.push(callback);
   }
 
-  private static conditionalTransformationException<T extends object>(targetMapping: Transformator.PropertyTransformationMapping) {
+  private static conditionalTransformationException<T extends object>(targetMapping?: Transformator.PropertyTransformationMapping) {
     return (target: T, propertyKey: string) => {
-      const resolver = (transformator: Transformator) => {
-        if (!transformator.propertyTransformationWhitelist.includes(propertyKey)) {
-          if (transformator.propertyTransformationMapping === targetMapping) {
-            transformator.propertyTransformationMask.push(propertyKey);
-          } else {
-            transformator.propertyTransformationWhitelist.push(propertyKey);
-          }
+      const resolver = (options: Transformator.ConfigOptions<any, any>) => {
+        const customOptions = {
+          propertyTransformationWhitelist: Array.from(options.propertyTransformationWhitelist ?? []),
+          propertyTransformationMask: Array.from(options.propertyTransformationMask ?? []),
+          propertyTransformationMapping: options.propertyTransformationMapping ?? Transformator.PropertyTransformationMapping.Inclusion,
+        };
+
+        if (customOptions.propertyTransformationWhitelist.includes(propertyKey)) {
+          return customOptions;
         }
+
+        if (typeof targetMapping === undefined) {
+          targetMapping = customOptions.propertyTransformationMapping === Transformator.PropertyTransformationMapping.Inclusion 
+            ? Transformator.PropertyTransformationMapping.Exclusion 
+            : Transformator.PropertyTransformationMapping.Inclusion;
+        }
+
+        if (customOptions.propertyTransformationMapping === targetMapping) {
+          customOptions.propertyTransformationWhitelist.push(propertyKey);
+        } else {
+          customOptions.propertyTransformationMask.push(propertyKey);
+        }
+
+        return customOptions;
       }
       
       Transformator.addRegistrationCallbackResolver(target.constructor, resolver);
     }
   }
+  // #endregion
 }
 
 export namespace Transformator {
+  export enum CreationMethod {
+    Manual = 'manual',
+    Dynamic = 'dynamic',
+  }
+
   export interface SerializationBridge<Instance = unknown> {
     readonly objectrafy: Objectra.ValueSerialization;
     readonly instance: Instance;
@@ -385,19 +527,47 @@ export namespace Transformator {
     readonly getter?: Transformer.Getter<any>;
   }
 
-  export interface Options<V, S> extends Transformers<V, S> {
-    readonly overload?: number;
+  export interface SpecificationOptions {
     readonly argumentPassthrough?: boolean;
-    readonly ignoreDefaultArgumentBehaviour?: boolean;
     readonly argumentPassthroughPropertyKeys?: string[];
-    readonly propertyTransformationMapping?: Transformator.PropertyTransformationMapping;
+    readonly ignoreDefaultArgumentBehaviour?: boolean;
     readonly propertyTransformationMask?: string[];
     readonly propertyTransformationWhitelist?: string[];
+    readonly propertyTransformationMapping?: Transformator.PropertyTransformationMapping;
     readonly useSerializationSymbolIterator?: boolean;
+  }
+
+  export interface ConfigOptions<V, S> extends SpecificationOptions, Transformers<V, S> {}
+
+  export interface RegistrationOptions<T extends Objectra.Identifier, V, S> extends ConfigOptions<V, S> {
+    readonly type: T;
+    readonly overload?: number;
+  }
+
+  export type InitOptions<T extends Objectra.Identifier, V, S> = Transformator.RegistrationOptions<T, V, S> & {
+    readonly branchedProperties: (keyof Transformator.ConfigOptions<V, S>)[];
+    readonly creationMethod: Transformator.CreationMethod;
+  }
+
+  export interface InheritedInitOptions<T extends Objectra.Identifier, V, S> {
+    readonly type: T;
+    readonly creationMethod: Transformator.CreationMethod;
+    readonly specifications?: SpecificationOptions;
+    readonly transformers?: Transformers<V, S>;
+  }
+
+  export interface ConfigOptionsSplitted<V, S> {
+    readonly specifications: SpecificationOptions;
+    readonly transformers: Transformers<V, S>;
   }
 
   export enum PropertyTransformationMapping {
     Inclusion = 'inclusion',
     Exclusion = 'exclusion',
+  }
+
+  export type RegistrationCallbackQueueMap = Map<Objectra.Identifier, RegistrationCallback[]>;
+  export interface RegistrationCallback<V = any, S = any> {
+    (options: ConfigOptions<V, S>): Writeable<ConfigOptions<V, S>>;
   }
 }

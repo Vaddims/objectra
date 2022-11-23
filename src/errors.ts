@@ -41,10 +41,10 @@ export class TransformatorAlreadyRegisteredError extends TransformatorError {
   }
 }
 
-export class TransformatorAlreadySetupedError extends TransformatorError {
+export class TransformatorAlreadyConfiguredError extends TransformatorError {
   constructor(identifier: Objectra.Identifier) {
-    const typeName = Transformator.typeToString(identifier)
-    super(`The transformator for ${typeName} type is already setuped.`);
+    const typeName = Transformator.typeToString(identifier);
+    super(`The transformator for ${typeName} type is already configured.`);
   }
 }
 
@@ -123,6 +123,15 @@ export class ArgumentPassthroughIndexAlreadyExistsError extends TransformatorErr
     const typeName = Transformator.typeToString(identifier);
     super(`Can not set more than 1 passthrough argument at the index ${index} in the ${typeName} transformator`, {
       solution: `Make sure that you do not repeat the indexes on the passthrough arguments`,
+    });
+  }
+}
+
+export class ArgumentPassthroughIncompatiblanceError extends TransformatorError {
+  constructor(identifier: Objectra.Identifier) {
+    const typeName = Transformator.typeToString(identifier);
+    super(`Can not set argument passthrough property key(s) when the global argument passthrough is enabled in the ${typeName} transformator`, {
+      solution: `Disable the global argument passthrough option on the transformator`,
     });
   }
 }

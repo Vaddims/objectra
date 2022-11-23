@@ -1,5 +1,5 @@
 import type { Objectra } from "..";
-import { ES3Primitives, ExtractArrayIndexes, ImplicitArray, UnindexableArray, IndexableObject } from "./util.types";
+import type { ES3Primitives, ExtractArrayIndexes, ImplicitArray, UnindexableArray } from "./util.types";
 
 export namespace Backloop {
   export interface Endpoint<_ extends Objectra> {};

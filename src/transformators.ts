@@ -2,46 +2,46 @@ import type { IndexableObject } from "./types/util.types";
 import { Transformator } from "./transformator";
 import { Objectra } from ".";
 
-export const stringTransformator = Transformator.register(String).setup<string, string>({
+export const stringTransformator = Transformator.register(String).configure<string, string>({
   instantiator: ({ representer, getRepresenterValue }) => getRepresenterValue(representer),
   serializator: ({ instance }) => instance,
 });
 
-export const booleanTransformator = Transformator.register(Boolean).setup<boolean, boolean>({
+export const booleanTransformator = Transformator.register(Boolean).configure<boolean, boolean>({
   instantiator: ({ representer, getRepresenterValue }) => getRepresenterValue(representer),
   serializator: ({ instance }) => instance,
 });
 
-export const numberTransformator = Transformator.register(Number).setup<number | string, number>({
+export const numberTransformator = Transformator.register(Number).configure<number | string, number>({
   instantiator: ({ representer, getRepresenterValue }) => Number(getRepresenterValue(representer)),
   serializator: ({ instance }) => isNaN(instance) ? instance.toString() : instance,
 });
 
-export const bigintTransformator = Transformator.register(BigInt).setup<string, bigint>({
+export const bigintTransformator = Transformator.register(BigInt).configure<string, bigint>({
   serializator: ({ instance }) => instance.toString(),
   ignoreDefaultArgumentBehaviour: true,
   argumentPassthrough: true,
 });
 
-export const symbolTransformator = Transformator.register(Symbol).setup<string | undefined, symbol>({
+export const symbolTransformator = Transformator.register(Symbol).configure<string | undefined, symbol>({
   serializator: ({ instance }) => instance.description,
   ignoreDefaultArgumentBehaviour: true,
   argumentPassthrough: true,
 });
 
-export const dateTransformator = Transformator.register(Date).setup<string>({
+export const dateTransformator = Transformator.register(Date).configure<string>({
   serializator: ({ instance }) => instance.toISOString(),
   ignoreDefaultArgumentBehaviour: true,
   argumentPassthrough: true,
 });
 
-export const arrayTransformator = Transformator.register(Array).setup<Objectra[]>({
+export const arrayTransformator = Transformator.register(Array).configure<Objectra[]>({
   instantiator: ({ representer, instantiateRepresenter }) => representer.map(instantiateRepresenter as any),
   serializator: ({ instance, serialize }) => instance.map(serialize),
 });
 
 export const objectTransformator = Transformator.register(Object)
-  .setup<IndexableObject<Objectra> | Array<Objectra>, IndexableObject | Array<unknown>>({
+  .configure<IndexableObject<Objectra> | Array<Objectra>, IndexableObject | Array<unknown>>({
   instantiator: (bridge) => {
     const { 
       instance, 
@@ -92,7 +92,7 @@ export const objectTransformator = Transformator.register(Object)
     }
 
     const result: Objectra.Content<any> = {}
-    const serializeProperties = (keys: string[]) => {
+    const serializeProperties = (keys: string[] | readonly string[]) => {
       for (const key of keys) {
         result[key] = serialize(instance[key]);
       }
@@ -114,7 +114,7 @@ export const objectTransformator = Transformator.register(Object)
   },
 });
 
-export const mapTransformator = Transformator.register(Map).setup({
+export const mapTransformator = Transformator.register(Map).configure({
   ignoreDefaultArgumentBehaviour: true,
   argumentPassthrough: true,
   useSerializationSymbolIterator: true,
@@ -122,7 +122,7 @@ export const mapTransformator = Transformator.register(Map).setup({
   setter: (target, key, value) => target.set(key, value),
 });
 
-export const setTransformator = Transformator.register(Set).setup({
+export const setTransformator = Transformator.register(Set).configure({
   ignoreDefaultArgumentBehaviour: true,
   argumentPassthrough: true,
   useSerializationSymbolIterator: true,

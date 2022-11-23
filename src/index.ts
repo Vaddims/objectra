@@ -1,9 +1,7 @@
-import { Backloop } from "./types/backloop.types";
-import { Constructor, ES3Primitives, ExtractArrayIndexes, IndexableObject, UnindexableArray } from "./types/util.types";
-import { Transformator } from "./transformator";
 import { everyArrayElementIsEqual, isClass, isPrimitive } from "./utils";
+import { Backloop } from "./types/backloop.types";
+import { Transformator } from "./transformator";
 import './transformators';
-export { Transformator };
 
 import {
 	InvalidPassthroughArgumentError, 
@@ -13,27 +11,19 @@ import {
 	ForeignBackloopReferenceError, 
 } from "./errors";
 
-const isIterableEntity = (target: unknown): target is IterableEntity => (
-	typeof target === 'object' && target !== null
-)
-
-const isReference = (target: unknown): target is Reference => (
-	isIterableEntity(target) || typeof target === 'symbol'
-);
-
-type IterableEntity = unknown[] | IndexableObject;
-type Reference = symbol | IterableEntity;
-
-type ReferenceAppearancePathMap = Map<Reference, IterableEntity[][]>;
-interface ObjectReferenceData {
-	readonly referenceAppearancePathMap: ReferenceAppearancePathMap;
-	readonly repeatingReferences: Reference[];
-}
+import type { 
+	Constructor, 
+	ES3Primitives, 
+	ExtractArrayIndexes, 
+	IndexableObject, 
+	UnindexableArray,
+	IterableEntity,
+} from "./types/util.types";
 
 export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Content<any>, InstanceType = any> {
 	private readonly id?: number;
 	private readonly name?: string;
-	private readonly type?: string;
+	private readonly type?: Objectra.Identifier;
 	private readonly overload?: number;
 	private readonly content?: ContentType;
 	private readonly hoistingReferences: Objectra[] = [];
@@ -42,7 +32,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		const { identifier, overload } = init;
 		
 		if (identifier) {
-			this.type = Transformator.typeToString(identifier);
+			this.type = identifier;
 		}
 
 		if (overload || overload === 0) {
@@ -70,16 +60,20 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		return typeof this.id !== 'undefined' && typeof this.content !== 'undefined';
 	}
 
-	private getSubobjectra(propertyKey: keyof ContentType): Objectra {
-		return (this.content as IndexableObject<Objectra>)[propertyKey];
+	private static isIterableEntity(target: unknown): target is IterableEntity {
+		return typeof target === 'object' && target !== null;
 	}
 
-	public static getObjectReferenceData(value: unknown): ObjectReferenceData {
-		const referenceAppearancePathMap: ReferenceAppearancePathMap = new Map();
-		const repeatingReferences: Reference[] = [];
+	private static isValueReference(target: unknown): target is Objectra.Reference {
+		return Objectra.isIterableEntity(target) || typeof target === 'symbol';
+	}
+
+	public static getObjectReferenceData(value: unknown): Objectra.ObjectReferenceData {
+		const referenceAppearancePathMap: Objectra.ReferenceAppearancePathMap = new Map();
+		const repeatingReferences: Objectra.Reference[] = [];
 
 		const analyzeValue = (target: unknown, pathStack: IterableEntity[] = []) => {
-			if (!isReference(target)) {
+			if (!Objectra.isValueReference(target)) {
 				return;
 			}
 
@@ -89,7 +83,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 					repeatingReferences.push(target);
 				}
 
-				if (isIterableEntity(target) && pathStack.includes(target)) {
+				if (Objectra.isIterableEntity(target) && pathStack.includes(target)) {
 					return; // The object has circular reference to itself
 				}
 
@@ -168,9 +162,9 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		}
 	} 
 
-	private static getReferenceHoistingParents(objectReferenceData: ObjectReferenceData) {
+	private static getReferenceHoistingParents(objectReferenceData: Objectra.ObjectReferenceData) {
 		const { repeatingReferences, referenceAppearancePathMap } = objectReferenceData;
-		const referenceHoistingParents = new Map<Reference, Reference>();
+		const referenceHoistingParents = new Map<Objectra.Reference, Objectra.Reference>();
 
 		for (const repeatingReference of repeatingReferences) {
 			const referenceAppearancePaths = referenceAppearancePathMap.get(repeatingReference)!;
@@ -188,10 +182,10 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		const referenceHoistingParentMap = Objectra.getReferenceHoistingParents(objectReferenceData);
 		const referenceHoistingParentArray = Array.from(referenceHoistingParentMap);
 
-		const referableReferences: Reference[] = [];
+		const referableReferences: Objectra.Reference[] = [];
 		const { repeatingReferences } = objectReferenceData;
 
-		const coldSerializationPermission = new Set<Reference>();
+		const coldSerializationPermission = new Set<Objectra.Reference>();
 
 		const objectraValueSerialization: Objectra.ValueSerialization = <T>(instance: T) => {
 			// TODO Make function serialization
@@ -207,20 +201,20 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				return new Objectra<Objectra.Content<T>>({ content: null as Objectra.Content<any> });
 			}
 
-			const objectInstance = instance as T & Reference; // TODO Check for primitives
+			const objectInstance = instance as T & Objectra.Reference; // TODO Check for primitives
 
 			if (typeof objectInstance.constructor !== 'function') {
 				throw new Error(`Can not objectrafy an object inherited value without a constructor`);
 			}
 
-			const instanceIsReference = isReference(objectInstance);
+			const instanceIsReference = Objectra.isValueReference(objectInstance);
 			const isReferenceSource = instanceIsReference && repeatingReferences.includes(objectInstance);
 
 			if (instanceIsReference && referableReferences.includes(objectInstance) && !coldSerializationPermission.has(objectInstance)) {
 				return new Objectra({ id: referableReferences.indexOf(objectInstance) });
 			}
 			
-			const instanceTransformator = Transformator.get(objectInstance.constructor);
+			const instanceTransformator = Transformator.get(objectInstance.constructor as Constructor);
 			const superTransformators = Transformator.getSuperTransformators(objectInstance.constructor as Constructor);
 
 			const transformators: Transformator[] = [];
@@ -280,8 +274,6 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 	}
 
 	public instantiate(): InstanceType {
-		// TODO Add reference instantiation
-
 		const typeConstructorGenerator = (transformator: Transformator<Constructor | Function>) => (...typeArguments: unknown[]) => {
 			try {
 				if (isClass(transformator.type)) {
@@ -294,7 +286,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			}
 		}
 
-		const resolvedReferenceMap = new Map<Objectra, Reference>();
+		const resolvedReferenceMap = new Map<Objectra, Objectra.Reference>();
 		const awaitingReferenceObjectraMap = new Map<Objectra, string[]>();
 
 		const drillObjectPath = (obj: any, path: string[]) => path.reduce((prev, key) => prev?.[key], obj);
@@ -326,6 +318,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				objectraValueInstantiation(hoistedObjectra);
 			});
 
+			// TODO Add support for other data types (ex. Map[<path>])
 			const injectReferenceInstance = (instance: any, transformator: Transformator) => {
 				const resolvedReferenceArray = Array.from(resolvedReferenceMap.keys());
 				for (const [obtra, path] of awaitingReferenceObjectraMap) {
@@ -337,30 +330,29 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 					const relativePath = path.slice(keyPath.length);
 					const lastKey = relativePath.pop()!;
 
-					if (transformator.setter === Reflect.set) {
-						const drilledObject = drillObjectPath(instance, relativePath);
-						drilledObject[lastKey] = resolvedReferenceMap.get(init);
-					}
+					const drilledObject = drillObjectPath(instance, relativePath);
+					drilledObject[lastKey] = resolvedReferenceMap.get(init);
 				}
 			}
 
 			if (name) {
-				const transformator = Transformator.get(name);
+				const transformator = Transformator.getStatic(name);
 				if (!transformator.instantiate) {
 					throw new InstantiationMethodDoesNotExistError(name);
 				}
 
 				return transformator.instantiate(createInstantiationBridge(transformator));
 			}
-
 			
 			if (type) {
-				const transformator = Transformator.getByType(type, overload);
+				const transformator = typeof type === 'string' ?
+					Transformator.getStaticByStringType(type) :
+					Transformator.get(type, overload);
+
 				const constructType = typeConstructorGenerator(transformator);
 				const typeConstructorParams = transformator.type.length;
 				
 				if (transformator && transformator.instantiate) {
-					
 					const instance = transformator.instantiate(createInstantiationBridge(transformator));
 					if (objectra.isReferenceSource) {
 						resolvedReferenceMap.set(objectra, instance);
@@ -458,10 +450,6 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			return undefined;
 		}
 
-					// fill all the self references
-
-			// fill the self references to the hoisting references
-
 		return objectraValueInstantiation(this);
 	}
 
@@ -514,6 +502,8 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 export namespace Objectra {
 	export type Identifier = Constructor | Function | string;
 
+	export type Reference = symbol | IterableEntity;
+
 	export type GetContentType<T extends Objectra> = T extends Objectra<infer U> ? U : never;
 	export type GetInstanceType<T extends Objectra> = T extends Objectra<any, infer U> ? U : never;
 
@@ -545,4 +535,15 @@ export namespace Objectra {
 	export type BackloopReferenceCreator = <T extends Objectra<Objectra.Content<any>>>(objectra: T) => Backloop.Reference<T>;
 	export type BackloopReferenceResolver = <T extends Backloop.Reference>(representer: T) => Backloop.ReferenceResolve<T>;
 	export type BackloopDuplex<T> = readonly [Backloop.Reference<Objectra<T>>, BackloopReferenceResolver];
+
+	export type ReferenceAppearancePathMap = Map<Objectra.Reference, IterableEntity[][]>;
+	export interface ObjectReferenceData {
+		readonly referenceAppearancePathMap: ReferenceAppearancePathMap;
+		readonly repeatingReferences: Objectra.Reference[];
+	}
 }
+
+export * as errors from './errors';
+export * as utils from './utils';
+export * as transformators from './transformators';
+export { Transformator } from './transformator';

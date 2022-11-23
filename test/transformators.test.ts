@@ -7,60 +7,60 @@ const boolean = true;
 describe('test objectra serialization and instantiation', () => {
 	describe('primitives', () => {
 		test('undefined', () => {
-			expect(Objectra.from(undefined).instantiate()).toBe(undefined);
+			expect(Objectra.duplicate(undefined)).toBe(undefined);
 		});
 
 		test('null', () => {
-			expect(Objectra.from(null).instantiate()).toBe(null);
+			expect(Objectra.duplicate(null)).toBe(null);
 		});
 
 		test('string', () => {
-			expect(Objectra.from(string).instantiate()).toBe(string);
+			expect(Objectra.duplicate(string)).toBe(string);
 		});
 
 		test('number', () => {
-			expect(Objectra.from(number).instantiate()).toBe(number);
-			expect(Objectra.from(NaN).instantiate()).toBe(NaN);
+			expect(Objectra.duplicate(number)).toBe(number);
+			expect(Objectra.duplicate(NaN)).toBe(NaN);
 		});
 
 		test('boolean', () => {
-			expect(Objectra.from(boolean).instantiate()).toBe(boolean);
+			expect(Objectra.duplicate(boolean)).toBe(boolean);
 		});
 
 		test('symbol', () => {
-			const instantiatedSymbol = Objectra.from(Symbol('test')).instantiate() as symbol;
-			expect(instantiatedSymbol.description).toBe(Symbol('test').description);
+			const symbol = Symbol('test');
+			const symbolDuplicate = Objectra.duplicate(symbol);
+			expect(typeof symbolDuplicate).toBe('symbol')
+			expect(symbolDuplicate).not.toBe(symbol);
+			expect(symbolDuplicate.description).toBe(symbol.description);
 		});
 
 		test('bigint', () => {
-			expect(Objectra.from(BigInt(number)).instantiate()).toBe(BigInt(number));
+			const bigint = BigInt(number);
+			expect(Objectra.duplicate(bigint)).toBe(bigint);
 		});
 	});
 
 	describe('simple instances', () => {
 		test('date', () => {
 			const date = new Date();
-			const objectraDate = Objectra.from(date).instantiate();
-			expect(objectraDate).toStrictEqual(date);
-			expect(objectraDate).not.toBe(date);
+			const dateDuplicate = Objectra.duplicate(date);
+			expect(dateDuplicate).toStrictEqual(date);
+			expect(dateDuplicate).not.toBe(date);
 		});
 
 		test('array', () => {
 			const array = [number, string, boolean];
-			const objectraArray = Objectra.from(array).instantiate();
-			expect(objectraArray).toStrictEqual(array);
-			expect(objectraArray).not.toBe(array);
+			const arrayDuplicate = Objectra.duplicate(array);
+			expect(arrayDuplicate).toStrictEqual(array);
+			expect(arrayDuplicate).not.toBe(array);
 		});
 
 		test('object', () => {
-			const object = {
-				number,
-				string,
-				boolean,
-			};
-			const objectraObject = Objectra.from(object).instantiate();
-			expect(objectraObject).toStrictEqual(object);
-			expect(objectraObject).not.toBe(object);
+			const object = { number, string, boolean };
+			const objectDuplciate = Objectra.from(object).instantiate();
+			expect(objectDuplciate).toStrictEqual(object);
+			expect(objectDuplciate).not.toBe(object);
 		});
 
 		test('map', () => {
@@ -69,30 +69,31 @@ describe('test objectra serialization and instantiation', () => {
 				['string', string],
 				['boolean', boolean],
 			]);
-			const objectraMap = Objectra.from(map).instantiate();
-			expect(objectraMap).toStrictEqual(map);
-			expect(objectraMap).not.toBe(map);
+
+			const mapDuplicate = Objectra.duplicate(map);
+			expect(mapDuplicate).toStrictEqual(map);
+			expect(mapDuplicate).not.toBe(map);
 		});
 
 		test('set', () => {
 			const set = new Set<unknown>([number, string, boolean]);
-			const objectraSet = Objectra.from(set).instantiate();
-			expect(objectraSet).toStrictEqual(set);
-			expect(objectraSet).not.toBe(set);
+			const setDuplicate = Objectra.duplicate(set);
+			expect(setDuplicate).toStrictEqual(set);
+			expect(setDuplicate).not.toBe(set);
 		});
 	})
 
 	describe('complex instances', () => {
 		test('array', () => {
-			const array = [number, string, boolean, new Set([number, string, boolean])];
+			const complexArray = [number, string, boolean, new Set([number, string, boolean])];
+			const complexArrayDuplicate = Objectra.duplicate(complexArray);
 
-			const objectraArray = Objectra.from(array).instantiate();
-			expect(objectraArray).toStrictEqual(array);
-			expect(objectraArray).not.toBe(array);
+			expect(complexArrayDuplicate).toStrictEqual(complexArray);
+			expect(complexArrayDuplicate).not.toBe(complexArray);
 		});
 
 		test('object', () => {
-			const object = {
+			const complexObject = {
 				number,
 				string,
 				boolean,
@@ -101,13 +102,13 @@ describe('test objectra serialization and instantiation', () => {
 				map: new Map(),
 			};
 
-			const objectraObject = Objectra.from(object).instantiate();
-			expect(objectraObject).toStrictEqual(object);
-			expect(objectraObject).not.toBe(object);
+			const complexObjectDuplicate = Objectra.duplicate(complexObject);
+			expect(complexObjectDuplicate).toStrictEqual(complexObject);
+			expect(complexObjectDuplicate).not.toBe(complexObject);
 		});
 
 		test('map', () => {
-			const map = new Map<string, unknown>([
+			const complexMap = new Map<string, unknown>([
 				['number', number],
 				['string', string],
 				['boolean', boolean],
@@ -116,17 +117,17 @@ describe('test objectra serialization and instantiation', () => {
 				['set', new Set([number, string, boolean])],
 			]);
 
-			const objectraMap = Objectra.from(map).instantiate();
-			expect(objectraMap).toStrictEqual(map);
-			expect(objectraMap).not.toBe(map);
+			const complexMapDuplicate = Objectra.duplicate(complexMap);
+			expect(complexMapDuplicate).toStrictEqual(complexMap);
+			expect(complexMapDuplicate).not.toBe(complexMap);
 		});
 
 		test('set', () => {
-			const set = new Set<unknown>([number, string, boolean, new Set([number, string, boolean])]);
+			const complexSet = new Set<unknown>([number, string, boolean, new Set([number, string, boolean])]);
+			const complexSetDuplicate = Objectra.duplicate(complexSet);
 
-			const objectraSet = Objectra.from(set).instantiate();
-			expect(objectraSet).toStrictEqual(set);
-			expect(objectraSet).not.toBe(set);
+			expect(complexSetDuplicate).toStrictEqual(complexSet);
+			expect(complexSetDuplicate).not.toBe(complexSet);
 		});
 	});
 });
