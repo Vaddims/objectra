@@ -114,6 +114,8 @@ export const objectTransformator = Transformator.register(Object)
   },
 });
 
+export const functionTransformator = Transformator.register(Function);
+
 export const mapTransformator = Transformator.register(Map).configure({
   ignoreDefaultArgumentBehaviour: true,
   argumentPassthrough: true,

@@ -1,4 +1,4 @@
-import { everyArrayElementIsEqual, isClass, isPrimitive } from "./utils";
+import { everyArrayElementIsEqual, FunctionType, functionType, isClass, isPrimitive } from "./utils";
 import { Backloop } from "./types/backloop.types";
 import { Transformator } from "./transformator";
 import './transformators';
@@ -21,18 +21,26 @@ import type {
 } from "./types/util.types";
 
 export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Content<any>, InstanceType = any> {
-	private readonly id?: number;
-	private readonly name?: string;
-	private readonly type?: Objectra.Identifier;
+	private readonly identifier?: Objectra.Identifier;
+	private readonly identifierIsConstructor: boolean;
 	private readonly overload?: number;
+
+	private readonly id?: number;
 	private readonly content?: ContentType;
 	private readonly hoistingReferences: Objectra[] = [];
 
 	private constructor(init: Objectra.Init<ContentType>) {
 		const { identifier, overload } = init;
-		
+
+		this.identifierIsConstructor = false;
+
 		if (identifier) {
-			this.type = identifier;
+			if (typeof identifier !== 'string' && init.identifierIsConstructor) {
+				this.identifier = identifier;
+				this.identifierIsConstructor = true;
+			} else {
+				this.identifier = identifier;
+			}
 		}
 
 		if (overload || overload === 0) {
@@ -65,7 +73,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 	}
 
 	private static isValueReference(target: unknown): target is Objectra.Reference {
-		return Objectra.isIterableEntity(target) || typeof target === 'symbol';
+		return Objectra.isIterableEntity(target) || typeof target === 'function' || typeof target === 'symbol';
 	}
 
 	public static getObjectReferenceData(value: unknown): Objectra.ObjectReferenceData {
@@ -92,7 +100,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				referenceAppearancePathMap.set(target, [[...pathStack]]);
 			}
 
-			if (typeof target === 'symbol') {
+			if (typeof target === 'symbol' || typeof target === 'function') {
 				return;
 			}
 
@@ -188,11 +196,6 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		const coldSerializationPermission = new Set<Objectra.Reference>();
 
 		const objectraValueSerialization: Objectra.ValueSerialization = <T>(instance: T) => {
-			// TODO Make function serialization
-			if (typeof instance === 'function') {
-				return new Objectra<Objectra.Content<T>>({ content: undefined });
-			}
-
 			if (typeof instance === 'undefined') {
 				return new Objectra<Objectra.Content<T>>({ content: undefined });
 			}
@@ -213,6 +216,8 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			if (instanceIsReference && referableReferences.includes(objectInstance) && !coldSerializationPermission.has(objectInstance)) {
 				return new Objectra({ id: referableReferences.indexOf(objectInstance) });
 			}
+
+
 			
 			const instanceTransformator = Transformator.get(objectInstance.constructor as Constructor);
 			const superTransformators = Transformator.getSuperTransformators(objectInstance.constructor as Constructor);
@@ -251,6 +256,15 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 					referableReferences.push(objectInstance)
 				}
 
+				const id = isReferenceSource ? referableReferences.indexOf(objectInstance) : void 0;
+
+				if (typeof objectInstance === 'function') {
+					return new Objectra({
+						identifier: objectInstance,
+						id,
+					});
+				} 
+
 				const objectraContent = transformator.serialize({
 					instance: objectInstance,
 					objectrafy: objectraValueSerialization,
@@ -259,8 +273,9 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 
 				const objectra = new Objectra({
 					identifier: objectInstance.constructor, 
+					identifierIsConstructor: true,
 					content: objectraContent,
-					id: isReferenceSource ? referableReferences.indexOf(objectInstance) : void 0,
+					id,
 					hoistingReferences: instanceObjectraHoistings.length ? instanceObjectraHoistings : void 0,
 				});
 
@@ -293,16 +308,13 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 
 		const keyPath: string[] = [];
 		const objectraValueInstantiation: Objectra.ValueInstantiation = (objectra) => {
-			// TODO Make function instantiation
-
-			const { name, type, overload, content } = objectra;
-
 			const createInstantiationBridge = (transformator: Transformator): Transformator.InstantiationBridge<any, any> => ({
 				value: objectra,
 				instantiate: objectraValueInstantiation,
 				initialTransformator: transformator,
 				keyPath,
 			});
+			
 
 			// Block circular instantiation
 			if (objectra.isReferenceDependence) {
@@ -335,19 +347,21 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				}
 			}
 
-			if (name) {
-				const transformator = Transformator.getStatic(name);
+			if (typeof objectra.identifier === 'string') {
+				const transformator = Transformator.getStatic(objectra.identifier);
 				if (!transformator.instantiate) {
-					throw new InstantiationMethodDoesNotExistError(name);
+					throw new InstantiationMethodDoesNotExistError(objectra.identifier);
 				}
 
 				return transformator.instantiate(createInstantiationBridge(transformator));
 			}
 			
-			if (type) {
-				const transformator = typeof type === 'string' ?
-					Transformator.getStaticByStringType(type) :
-					Transformator.get(type, overload);
+			if (typeof objectra.identifier !== 'undefined') {
+				if (!objectra.identifierIsConstructor) {
+					return objectra.identifier;
+				}
+
+				const transformator = Transformator.get(objectra.identifier, objectra.overload);
 
 				const constructType = typeConstructorGenerator(transformator);
 				const typeConstructorParams = transformator.type.length;
@@ -363,8 +377,8 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				}
 
 				const useForceArgumentPassthrough = transformator.ignoreDefaultArgumentBehaviour && transformator.argumentPassthrough;
-				if (isPrimitive(content) && (typeConstructorParams === 1 || useForceArgumentPassthrough)) {
-					const instance = constructType(content);
+				if (isPrimitive(objectra.content) && (typeConstructorParams === 1 || useForceArgumentPassthrough)) {
+					const instance = constructType(objectra.content);
 
 					if (objectra.isReferenceSource) {
 						resolvedReferenceMap.set(objectra, instance);
@@ -420,7 +434,6 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 							injectReferenceInstance(instance, transformator)
 						}
 
-
 						return instance;
 					}
 
@@ -440,10 +453,10 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 					}
 				}
 
-				throw new InvalidInstantiationArgumentQuantityError(type);
+				throw new InvalidInstantiationArgumentQuantityError(objectra.identifier);
 			}
 
-			if (content === null) {
+			if (objectra.content === null) {
 				return null;
 			}
 
@@ -454,11 +467,10 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 	}
 
 	public static duplicate<T>(value: T) {
-		// TODO Overhaul and don't require function transformators
 		return Objectra.from(value).instantiate();
 	}
 
-	protected createBackloopReferenceDuplex(): Objectra.BackloopDuplex<ContentType> {
+	private createBackloopReferenceDuplex(): Objectra.BackloopDuplex<ContentType> {
 		type Representer = {} | [];
 		const referenceMap = new Map<Representer, Objectra<any>>();
 
@@ -502,7 +514,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 export namespace Objectra {
 	export type Identifier = Constructor | Function | string;
 
-	export type Reference = symbol | IterableEntity;
+	export type Reference = symbol | IterableEntity | Function;
 
 	export type GetContentType<T extends Objectra> = T extends Objectra<infer U> ? U : never;
 	export type GetInstanceType<T extends Objectra> = T extends Objectra<any, infer U> ? U : never;
@@ -523,6 +535,7 @@ export namespace Objectra {
 
 	export interface Init<ContentType extends Objectra.Content<any>> {
 		readonly identifier?: Identifier;
+		readonly identifierIsConstructor?: boolean;
 		readonly overload?: number;
 		readonly id?: number;
 		readonly hoistingReferences?: Objectra[] | undefined; 
@@ -540,6 +553,14 @@ export namespace Objectra {
 	export interface ObjectReferenceData {
 		readonly referenceAppearancePathMap: ReferenceAppearancePathMap;
 		readonly repeatingReferences: Objectra.Reference[];
+	}
+
+	export interface Model {
+		readonly type?: string; // Class constructor name
+		readonly name?: string; // Instance specification name
+		readonly overload?: number; // Overload for class / instance that have the same specification / constructor name
+		readonly content?: ContentStructure<Model>;
+		readonly hoisitings?: Model[];
 	}
 }
 
