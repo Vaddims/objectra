@@ -363,10 +363,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
         throw new TransformatorAlreadyRegisteredError(constructor);
       }
 
-      const callbackQueue = Transformator.registrationCallbackQueueMap.get(constructor);
-      if (!callbackQueue) {
-        return;
-      }
+      const callbackQueue = Transformator.registrationCallbackQueueMap.get(constructor) ?? [];
 
       Transformator.registrationCallbackQueueMap.delete(constructor);
       

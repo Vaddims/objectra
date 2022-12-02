@@ -1,4 +1,4 @@
-import { everyArrayElementIsEqual, FunctionType, functionType, isClass, isPrimitive } from "./utils";
+import { everyArrayElementIsEqual, FunctionType, functionType, isClass, isES3Primitive, isES5Primitive } from "./utils";
 import { Backloop } from "./types/backloop.types";
 import { Transformator } from "./transformator";
 import './transformators';
@@ -8,7 +8,8 @@ import {
 	InstantiationMethodDoesNotExistError,
 	InvalidInstantiationArgumentQuantityError,
 	TransformatorMatchNotFoundError,
-	ForeignBackloopReferenceError, 
+	ForeignBackloopReferenceError,
+	TransformatorNotFoundError, 
 } from "./errors";
 
 import type { 
@@ -18,6 +19,7 @@ import type {
 	IndexableObject, 
 	UnindexableArray,
 	IterableEntity,
+	Writeable,
 } from "./types/util.types";
 
 export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Content<any>, InstanceType = any> {
@@ -58,6 +60,119 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		if ('id' in init && typeof init.id !== 'undefined') {
 			this.id = init.id;
 		}
+	}
+
+	public get isStructureEndpoint() {
+		return isES3Primitive(this.content);
+	}
+
+	public toModel(): Objectra.Model {
+		const createModel = (objectra: Objectra) => {
+			if (objectra.identifier && !Transformator.exists(objectra.identifier, objectra.overload)) {
+				throw new TransformatorNotFoundError(objectra.identifier);
+			}
+			
+			const model: Writeable<Objectra.Model> = {};
+			
+			if (typeof objectra.identifier === 'string') {
+				model.name = objectra.identifier;
+			} else if (typeof objectra.identifier === 'function') {
+				if (objectra.identifierIsConstructor) {
+					model.type = objectra.identifier.name;
+				} else {
+					model.type = Function.name;
+					model.name = objectra.identifier.name;
+				}
+			}
+
+			if (typeof objectra.overload === 'number') {
+				model.overload = objectra.overload;
+			}
+
+			if (typeof objectra.id === 'number') {
+				model.id = objectra.id;
+			}
+
+			if (objectra.hoistingReferences?.length > 0) {
+				model.hoisitings = objectra.hoistingReferences.map(createModel);
+			}
+
+			if (objectra.isStructureEndpoint) {
+				model.content = objectra.content;
+			} else if (objectra.content) {
+				model.content = {};
+				for (const key in objectra.content) {
+					model.content[key] = createModel(objectra.content[key]);
+				}
+			}
+			
+			model.content = {};
+			if (objectra.content) {
+				if (objectra.isStructureEndpoint) {
+					model.content = objectra.content;
+				} else {
+					for (const key in objectra.content) {
+						model.content[key] = createModel(objectra.content[key]);
+					}
+				}
+
+			}
+			
+			return model as Objectra.Model;
+		}
+
+		return createModel(this);
+	}
+
+	public stringify(replacer?: (string | number)[] | null, space?: string | number) {
+		return JSON.stringify(this.toModel(), replacer, space);
+	}
+
+	public static parseModel(model: Objectra.Model | string): Objectra {
+		const parseModel = (target: Objectra.Model): Objectra => {
+			const constructObjectra = (identifier: Objectra.Identifier, isConstructor: boolean) => {
+				const hoistings: Objectra[] = Array.from(target.hoisitings?.map(parseModel) ?? []);
+
+				let content: Objectra.ContentStructure<Objectra>;
+
+				if (isES3Primitive(target.content)) {
+					content = target.content;
+				} else if (Array.isArray(target.content)) {
+					content = target.content.map(parseModel); 
+				} else {
+					for (const key in target.content) {
+						content = {};
+						content[key] = parseModel(target.content[key]);
+					}
+				}
+				
+				return new Objectra({
+					content,
+					id: target.id,
+					identifier,
+					identifierIsConstructor: isConstructor,
+					hoistingReferences: hoistings,
+					overload: target.overload,
+				});
+			}
+
+			if (target.type) {
+				const targetStringIdentifier = typeof target.name === 'string' ? target.name : target.type;
+
+				if (typeof target.name === 'string') {
+					const transformator = Transformator.getStaticByStringType(target.name, target.overload);
+					return constructObjectra(transformator.type, false);
+				}
+
+				const transformator = Transformator.getStaticByStringType(targetStringIdentifier, target.overload);
+				return constructObjectra(transformator.type, true);
+			}
+
+			throw new Error('Parsing model by instance specification name is not supported yet');
+			// TODO ADD model parsing for instance specification names
+		}
+
+		return parseModel(typeof model === 'string' ? JSON.parse(model) : model);
 	}
 
 	private get isReferenceDependence() {
@@ -377,7 +492,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				}
 
 				const useForceArgumentPassthrough = transformator.ignoreDefaultArgumentBehaviour && transformator.argumentPassthrough;
-				if (isPrimitive(objectra.content) && (typeConstructorParams === 1 || useForceArgumentPassthrough)) {
+				if (isES5Primitive(objectra.content) && (typeConstructorParams === 1 || useForceArgumentPassthrough)) {
 					const instance = constructType(objectra.content);
 
 					if (objectra.isReferenceSource) {
@@ -559,8 +674,9 @@ export namespace Objectra {
 		readonly type?: string; // Class constructor name
 		readonly name?: string; // Instance specification name
 		readonly overload?: number; // Overload for class / instance that have the same specification / constructor name
-		readonly content?: ContentStructure<Model>;
+		readonly content?: ContentStructure<Model> | undefined;
 		readonly hoisitings?: Model[];
+		readonly id?: number;
 	}
 }
 
