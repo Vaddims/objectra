@@ -36,7 +36,14 @@ export const dateTransformator = Transformator.register(Date).configure<string>(
 });
 
 export const arrayTransformator = Transformator.register(Array).configure<Objectra[]>({
-  instantiator: ({ representer, instantiateRepresenter }) => representer.map(instantiateRepresenter as any),
+  instantiator: ({ representer, instantiateRepresenter, keyPath, initialTransformator }) => {
+    return representer.map((element, index) => {
+      keyPath.push(String(index));
+      const res = instantiateRepresenter(element as any);
+      keyPath.pop();
+      return res;
+    });
+  },
   serializator: ({ instance, serialize }) => instance.map(serialize),
 });
 
@@ -120,14 +127,25 @@ export const mapTransformator = Transformator.register(Map).configure({
   ignoreDefaultArgumentBehaviour: true,
   argumentPassthrough: true,
   useSerializationSymbolIterator: true,
+  symbolIteratorEntryDepth: 2,
   getter: (target, key) => target.get(key),
-  setter: (target, key, value) => target.set(key, value),
+  setter: (target, entry: [unknown, unknown]) => target.set(...entry),
 });
 
 export const setTransformator = Transformator.register(Set).configure({
   ignoreDefaultArgumentBehaviour: true,
   argumentPassthrough: true,
   useSerializationSymbolIterator: true,
+  symbolIteratorEntryDepth: 1,
   getter: (target, key) => target.get(key),
-  setter: (target, _, value) => target.add(value),
+  setter: (target, entry) => target.add(entry),
 });
+
+export const weakSetTransformator = Transformator.register(WeakSet).configure({
+  ignoreDefaultArgumentBehaviour: true,
+  argumentPassthrough: true,
+  symbolIteratorEntryDepth: 1,
+  useSerializationSymbolIterator: true,
+  getter: (weakSet, entry) => weakSet.get(entry),
+  setter: (weakSet, entry) => weakSet.add(entry),
+})
