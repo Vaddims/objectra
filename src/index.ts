@@ -332,17 +332,25 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			}
 
 			const instanceIsReference = Objectra.isValueReference(objectInstance);
-			const referenceIsSource = (
+			const referenceIsOrigin = 
 				instanceIsReference
 				&& repeatingReferences.includes(objectInstance)
-				&& !referableReferences.includes(objectInstance)
-			);
+				&& !referableReferences.includes(objectInstance);
 
-			if (!referenceIsSource && repeatingReferences.includes(objectInstance)) {
+			const referenceIsClassConstructor = typeof objectInstance === 'function' && isClass(objectInstance);
+
+			const referenceShouldInstantiate =
+				typeof objectInstance === 'function' && isClass(objectInstance)
+				? false
+				: referenceIsOrigin;
+
+			if (!referenceShouldInstantiate && repeatingReferences.includes(objectInstance) && referableReferences.includes(objectInstance)) {
 				return new Objectra({ id: referableReferences.indexOf(objectInstance) });
 			}
-
-			referableReferences.push(objectInstance);
+			
+			if (!referenceIsClassConstructor) {
+				referableReferences.push(objectInstance);
+			}
 			
 			const instanceTransformator = Transformator.get(objectInstance.constructor as Constructor);
 			const superTransformators = Transformator.getSuperTransformators(objectInstance.constructor as Constructor);
@@ -364,7 +372,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 
 			const instanceObjectraHoistings = instanceHoistingReferences.map(objectraValueSerialization);
 
-			const id = referenceIsSource ? referableReferences.indexOf(objectInstance) : void 0;
+			const id = referenceShouldInstantiate ? referableReferences.indexOf(objectInstance) : void 0;
 
 			if (typeof objectInstance === 'function') {
 				return new Objectra({
@@ -465,7 +473,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 					if (transformator.useSerializationSymbolIterator) {
 						const entries = iterableInstanceContents.get(drilledObject);
 						if (!entries) {
-							throw 'hmm';
+							throw Error('No entries');
 						}
 						drilledObject = entries[Number(key)];
 					} else {
