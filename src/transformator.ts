@@ -37,14 +37,15 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
   
   // Branching
   public readonly useSerializationSymbolIterator: boolean;
+  public readonly symbolIteratorEntryDepth: number;
   private readonly branchedProperties: readonly (keyof Transformator.ConfigOptions<InstanceType, SerializationType>)[] = [];
   private configurable = true;
 
   // transformers
-  private readonly serializator: Transformator.Transformers<InstanceType, SerializationType>['serializator'];
-  private readonly instantiator: Transformator.Transformers<InstanceType, SerializationType>['instantiator'];
-  private readonly getter: Transformator.Transformers<InstanceType, SerializationType>['getter'];
-  private readonly setter: Transformator.Transformers<InstanceType, SerializationType>['setter'];
+  public readonly serializator: NonNullable<Transformator.Transformers<InstanceType, SerializationType>['serializator']>;
+  public readonly instantiator: NonNullable<Transformator.Transformers<InstanceType, SerializationType>['instantiator']>;
+  public readonly getter: NonNullable<Transformator.Transformers<InstanceType, SerializationType>['getter']>;
+  public readonly setter: NonNullable<Transformator.Transformers<InstanceType, SerializationType>['setter']>;
 
   // * Static Properties
   public static readonly staticRegistrations: Transformator[] = [];
@@ -67,11 +68,12 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
     this.propertyTransformationMapping = options.propertyTransformationMapping ?? Transformator.PropertyTransformationMapping.Inclusion;
 
     this.useSerializationSymbolIterator = options.useSerializationSymbolIterator ?? false;
+    this.symbolIteratorEntryDepth = options.symbolIteratorEntryDepth ?? 1;
 
-    this.serializator = options.serializator;
-    this.instantiator = options.instantiator;
-    this.getter = options.getter;
-    this.setter = options.setter;
+    this.serializator = options.serializator!;
+    this.instantiator = options.instantiator!;
+    this.getter = options.getter!;
+    this.setter = options.setter!;
 
     this.branchedProperties = [...options.branchedProperties];
     
@@ -357,7 +359,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
   // #endregion
 
   // #region Decorators
-  public static Register<T = unknown, S = any, K extends Constructor = Constructor<T>>(options: Transformator.ConfigOptions<IdentifierInstance<K>, S> = {}) {
+  public static Register<T = unknown, S = any, K extends Constructor = T extends Constructor ? T : Constructor<T>>(options: Transformator.ConfigOptions<IdentifierInstance<K>, S> = {}) {
     return (constructor: K) => {
       if (Transformator.exists(constructor)) {
         throw new TransformatorAlreadyRegisteredError(constructor);
@@ -489,8 +491,8 @@ export namespace Transformator {
   }
 
   export namespace Transformer {
-    export type Setter<T> = (target: T, key: any, value: any, receiver?: any) => void;
-    export type Getter<T> = (target: T, key: any, receiver?: any) => unknown;
+    export type Setter<T> = (target: T, entry: any) => void;
+    export type Getter<T> = (target: T, entry: any) => unknown;
     
     export interface SerializationBridge<InstanceType> {
       readonly serialize: (value: unknown) => Objectra;
@@ -532,6 +534,7 @@ export namespace Transformator {
     readonly propertyTransformationWhitelist?: string[];
     readonly propertyTransformationMapping?: Transformator.PropertyTransformationMapping;
     readonly useSerializationSymbolIterator?: boolean;
+    readonly symbolIteratorEntryDepth?: number;
   }
 
   export interface ConfigOptions<V, S> extends SpecificationOptions, Transformers<V, S> {}
