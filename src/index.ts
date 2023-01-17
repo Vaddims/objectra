@@ -191,107 +191,84 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		return Objectra.isIterableEntity(target) || typeof target === 'function' || typeof target === 'symbol';
 	}
 
-	public static getObjectReferenceData(value: unknown): Objectra.ObjectReferenceData {
+	public static getObjectData(value: unknown) {
 		const referenceAppearancePathMap: Objectra.ReferenceAppearancePathMap = new Map();
-		const repeatingReferences: Objectra.Reference[] = [];
+		const repeatingReferences = new Set<Objectra.Reference>();
+		let actualDepth = 0; // The depth with circular references counting in (Infinite when circular)
+		let shallowDepth = 0; // The depth with circular reference block
+		analyzeValue(value);
 
-		const analyzeValue = (target: unknown, pathStack: IterableEntity[] = []) => {
-			if (!Objectra.isValueReference(target)) {
+		return {
+			referenceAppearancePathMap,
+			repeatingReferences,
+			actualDepth,
+			shallowDepth,
+		}
+
+		function analyzeValue(target: unknown, pathStack: IterableEntity[] = []) {
+			if (!Objectra.isValueReference(target) || typeof target.constructor !== 'function') {
 				return;
 			}
 
+			const currentPathStack = [...pathStack];
 			const transformator = Transformator.get(target.constructor);
+			const registeredApearencePaths = referenceAppearancePathMap.get(target);
 
-			const referenceApearancePaths = referenceAppearancePathMap.get(target);
-			if (referenceApearancePaths) {
-				if (!repeatingReferences.includes(target)) {
-					repeatingReferences.push(target);
-				}
-
+			if (registeredApearencePaths) {
+				repeatingReferences.add(target);
 				if (Objectra.isIterableEntity(target) && pathStack.includes(target)) {
+					actualDepth = Infinity;
 					return; // The object has circular reference to itself
 				}
-
-				referenceApearancePaths.push([...pathStack]);
 			} else {
-				referenceAppearancePathMap.set(target, [[...pathStack]]);
+				referenceAppearancePathMap.set(target, [currentPathStack]);
+			}
+		
+			if (shallowDepth < currentPathStack.length) {
+				shallowDepth++;
 			}
 
+			if (actualDepth < currentPathStack.length) {
+				actualDepth++;
+			}
+			
 			if (typeof target === 'symbol' || typeof target === 'function') {
 				return;
 			}
 
-			if (repeatingReferences.includes(target)) {
-				return;
-			}
+			const subfieldPath = [...pathStack, target];
 
 			if (Array.isArray(target)) {
-				target.forEach(element => analyzeValue(element, [...pathStack, target]));
+				target.forEach(element => analyzeValue(element, subfieldPath));
 				return;
 			}
 
 			if (transformator.useSerializationSymbolIterator && typeof target[Symbol.iterator] === 'function') {
 				const entries = (target as IndexableObject<any>)[Symbol.iterator]();
 				for (const entry of entries) {
-					analyzeValue(entry, [...pathStack, target]);
+					analyzeValue(entry, subfieldPath);
 				}
-			} else {
-				const indexableObjectKeys = Object.getOwnPropertyNames(target);
-				for (const key of indexableObjectKeys) {
-					analyzeValue(target[key], [...pathStack, target]);
-				}
+				return;
+			} 
+
+			const indexableObjectKeys = Object.getOwnPropertyNames(target);
+			for (const key of indexableObjectKeys) {
+				analyzeValue(target[key], subfieldPath);
 			}
-
-			return;
-		}
-
-		analyzeValue(value);
-
-		return {
-			referenceAppearancePathMap,
-			repeatingReferences,
 		}
 	}
 
-	public static *multidimensionaIndexCombinationGenerator(maxIndexes: number[]): IterableIterator<number[]> {
-		const indexes = new Array<number>(maxIndexes.length).fill(0);
-		const lastStackIndex = maxIndexes.length - 1;
-
-		let indexOverflow = false;
-		while (!indexOverflow) {
-			yield indexes;
-
-			let targetStack = 0;
-			let shift = false; 
-			
-			do {
-				shift = false;
-				
-				const index = indexes[targetStack];
-				const maxIndex = maxIndexes[targetStack];
-				if (index < maxIndex) {
-					indexes[targetStack]++;
-				} else if (targetStack === lastStackIndex && index === maxIndex) {
-					indexOverflow = true;
-				} else {
-					indexes[targetStack] = 0;
-					targetStack++;
-					shift = true;
-				}
-			} while (shift);
-		}
-	}
-
-	private static getReferenceCommonParent(originalReferenceAppearancePaths: IterableEntity[][]) {
-		const referenceAppearancePaths = originalReferenceAppearancePaths.map(stack => [...stack].reverse());
-		const referenceAppearancePathMaxIndexes = referenceAppearancePaths.map((paths) => paths.length - 1);
-		const multidimensionalIndexIterator = Objectra.multidimensionaIndexCombinationGenerator(referenceAppearancePathMaxIndexes);
-
-		for (const indexes of multidimensionalIndexIterator) {
-			const indexedReferenceAppearancePaths = indexes.map((index, stack) => referenceAppearancePaths[stack][index]);
-			if (everyArrayElementIsEqual(indexedReferenceAppearancePaths)) {
-				return referenceAppearancePaths[0]?.[indexes[0]];
+	private static getReferenceCommonParent(referenceAppearancePaths: IterableEntity[][]) {
+		const referencePath = referenceAppearancePaths[0];
+		for (let i = 0; i < referencePath.length - 1; i++) {
+			const nextIndex = i + 1;
+			const parallelPathElements = referenceAppearancePaths.map(element => element[nextIndex]);
+			const pathsShareParent = everyArrayElementIsEqual(parallelPathElements);
+			if (pathsShareParent) {
+				continue;
 			}
+
+			return referencePath[i];
 		}
 	} 
 
@@ -311,10 +288,14 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 	}
 
 	public static from<T>(value: T): Objectra<Objectra.Content<T>, T> {
-		const objectReferenceData = Objectra.getObjectReferenceData(value);
+		const objectReferenceData = Objectra.getObjectData(value);
 		const referenceHoistingParentMap = Objectra.getReferenceHoistingParents(objectReferenceData);
-		const referableReferences: Objectra.Reference[] = [];
+		const referableReferences = new Set<Objectra.Reference>();
+		
 		const { repeatingReferences } = objectReferenceData;
+		const referenceIdentifiers = new Map<Objectra.Reference, number>(
+			Array.from(repeatingReferences).map((reference, index) => [reference, index])
+		);
 
 		const objectraValueSerialization: Objectra.ValueSerialization = <T>(instance: T) => {
 			if (typeof instance === 'undefined') {
@@ -334,8 +315,8 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			const instanceIsReference = Objectra.isValueReference(objectInstance);
 			const referenceIsOrigin = 
 				instanceIsReference
-				&& repeatingReferences.includes(objectInstance)
-				&& !referableReferences.includes(objectInstance);
+				&& repeatingReferences.has(objectInstance)
+				&& !referableReferences.has(objectInstance);
 
 			const referenceIsClassConstructor = typeof objectInstance === 'function' && isClass(objectInstance);
 
@@ -344,12 +325,17 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				? false
 				: referenceIsOrigin;
 
-			if (!referenceShouldInstantiate && repeatingReferences.includes(objectInstance) && referableReferences.includes(objectInstance)) {
-				return new Objectra({ id: referableReferences.indexOf(objectInstance) });
+			if (!referenceShouldInstantiate && repeatingReferences.has(objectInstance) && referableReferences.has(objectInstance)) {
+				const id = referenceIdentifiers.get(objectInstance);
+				if (typeof id === 'undefined') {
+					throw new Error('Internal id not found')
+				}
+
+				return new Objectra({ id });
 			}
 			
 			if (!referenceIsClassConstructor) {
-				referableReferences.push(objectInstance);
+				referableReferences.add(objectInstance);
 			}
 			
 			const instanceTransformator = Transformator.get(objectInstance.constructor as Constructor);
@@ -372,8 +358,8 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 
 			const instanceObjectraHoistings = instanceHoistingReferences.map(objectraValueSerialization);
 
-			const id = referenceShouldInstantiate ? referableReferences.indexOf(objectInstance) : void 0;
-
+			const id = referenceShouldInstantiate ? referenceIdentifiers.get(objectInstance) : void 0;
+			
 			if (typeof objectInstance === 'function') {
 				return new Objectra({
 					identifier: objectInstance,
@@ -398,106 +384,18 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			return objectra;
 		}
 
-		return objectraValueSerialization(value);
+		const result = objectraValueSerialization(value);
+		return result;
 	}
 
 	public instantiate(): InstanceType {
 		const resolvedReferenceMap = new Map<Objectra, Objectra.Reference>();
 		const awaitingReferenceObjectraMap = new Map<Objectra, string[]>();
 		const iterableInstanceContents = new Map<Objectra.Reference, unknown[]>();
-		const hoistings: Objectra[] = [];
-		const keyPath: any[] = [];
-
-		const typeConstructorGenerator = (transformator: Transformator<Constructor | Function>) => (...typeArguments: unknown[]) => {
-			try {
-				if (isClass(transformator.type)) {
-					return new transformator.type(...typeArguments);
-				}
-
-				return transformator.type(...typeArguments);							
-			} catch (error) {
-				throw new InvalidPassthroughArgumentError(transformator.type, error);
-			}
-		}
-
-		const getResolvedInstance = (target: Objectra) => {
-			const resolvedReferences = Array.from(resolvedReferenceMap);
-			for (const [resolvedObjectra, resolvedInstance] of resolvedReferences) {
-				if (resolvedObjectra.id === target.id) {
-					return resolvedInstance;
-				}
-			}
-		}
-
-		// TODO Add support for other data types (ex. Map[<path>])
-		const injectInstanceUnfilledReferences = (instance: any, transformator?: Transformator) => {
-			for (const [obtra, path] of awaitingReferenceObjectraMap) {
-				const awaitingReferenceInstance = getResolvedInstance(obtra);
-				if (!awaitingReferenceInstance) {
-					continue;
-				}
-
-				const fullRelativePath = path.slice(keyPath.length);
-				const readonlyRelativePath = [...fullRelativePath];
-				const writeKey = readonlyRelativePath.pop()!;
-				
-
-				let drilledObject = instance;
-				for (let i = 0; i < fullRelativePath.length; i++) {
-					const key = fullRelativePath[i];
-					if (!drilledObject) {
-						continue;
-					}
-
-					// WRITE
-					const transformator = Transformator.get(drilledObject.constructor);
-					if (transformator.useSerializationSymbolIterator) {
-						if (i + transformator.symbolIteratorEntryDepth === fullRelativePath.length) {
-							const entries = iterableInstanceContents.get(drilledObject);
-							if (!entries) {
-								continue;
-							}
-
-							injectInstanceUnfilledReferences(entries);
-						}
-					}
-
-					// WRITE
-					const keyIsLast = key === fullRelativePath.at(-1);
-					if (keyIsLast) {
-						drilledObject = drilledObject[key];
-						break;
-					}
-
-					// drill
-					if (transformator.useSerializationSymbolIterator) {
-						const entries = iterableInstanceContents.get(drilledObject);
-						if (!entries) {
-							throw Error('No entries');
-						}
-						drilledObject = entries[Number(key)];
-					} else {
-						drilledObject = drilledObject[key];
-					}
-				}
-			}
-
-			for (const [reference, entries] of iterableInstanceContents) {
-				const transformator = Transformator.get(reference.constructor);
-				for (const entry of entries) {
-					transformator.setter(reference, entry);
-				}
-			}
-		}
+		const hoistingMap = new Map<number, Objectra>();
+		const keyPath: string[] = [];
 
 		const objectraValueInstantiation: Objectra.ValueInstantiation = (objectra) => {
-			const createInstantiationBridge = (transformator: Transformator): Transformator.InstantiationBridge<any, any> => ({
-				value: objectra,
-				instantiate: objectraValueInstantiation,
-				initialTransformator: transformator,
-				keyPath,
-			});
-
 			// Block circular instantiation
 			if (objectra.isReferenceDependence) {
 				const resolvedInstance = getResolvedInstance(objectra);
@@ -505,13 +403,13 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 					return resolvedInstance;
 				}
 
-				const target = hoistings.find(hoisting => hoisting.id === objectra.id);
+				const target = hoistingMap.get(objectra.id!);
 				if (!target) {
 					awaitingReferenceObjectraMap.set(objectra, [...keyPath]);
 					return new Objectra.ReferenceInjection();
 				}
 
-				hoistings.splice(hoistings.indexOf(target), 1);
+				hoistingMap.delete(target.id!);
 				const instance = objectraValueInstantiation(target);
 				return instance;
 			}
@@ -535,7 +433,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				const constructType = typeConstructorGenerator(transformator);
 				const typeConstructorParams = transformator.type.length;
 
-				hoistings.push(...objectra.hoistingReferences);
+				objectra.hoistingReferences.forEach((objectra) => hoistingMap.set(objectra.id!, objectra));
 				
 				if (transformator && transformator.instantiate) {
 					if (objectra.isReferenceSource) {
@@ -590,7 +488,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				if (transformator['argumentPassthroughPropertyKeys'].length > 0) {
 					const instantiationOptions = createInstantiationBridge(transformator);
 					const value = instantiationTransformator.instantiate!(instantiationOptions);
-					injectInstanceUnfilledReferences(value, transformator);
+					injectInstanceUnfilledReferences(value);
 
 					const propKeys = transformator['argumentPassthroughPropertyKeys'];
 					const args = propKeys.map(key => value[key]);
@@ -643,12 +541,101 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			}
 
 			return undefined;
+
+			function createInstantiationBridge(transformator: Transformator): Transformator.InstantiationBridge<any, any> {
+				return {
+					value: objectra,
+					instantiate: objectraValueInstantiation,
+					initialTransformator: transformator,
+					keyPath,
+				}
+			};
 		}
 		
-		
 		const finalInstance = objectraValueInstantiation(this);
-		injectInstanceUnfilledReferences(finalInstance, Transformator.get(Object));
+		injectInstanceUnfilledReferences(finalInstance);
 		return finalInstance;
+
+		function typeConstructorGenerator(transformator: Transformator<Constructor | Function>) {
+			return function (...typeArguments: unknown[]) {
+				try {
+					if (isClass(transformator.type)) {
+						return new transformator.type(...typeArguments);
+					}
+	
+					return transformator.type(...typeArguments);							
+				} catch (error) {
+					throw new InvalidPassthroughArgumentError(transformator.type, error);
+				}
+			}
+		}
+
+		function getResolvedInstance(target: Objectra) {
+			const resolvedReferences = Array.from(resolvedReferenceMap);
+			for (const [resolvedObjectra, resolvedInstance] of resolvedReferences) {
+				if (resolvedObjectra.id === target.id) {
+					return resolvedInstance;
+				}
+			}
+		}
+
+		function injectInstanceUnfilledReferences(instance: any) {
+			for (const [objectra, appearancePath] of awaitingReferenceObjectraMap) {
+				const awaitingReferenceInstance = getResolvedInstance(objectra);
+				if (!awaitingReferenceInstance) {
+					continue;
+				}
+
+				const fullRelativePath = appearancePath.slice(keyPath.length);
+
+				let drilledObject = instance;
+				for (let i = 0; i < fullRelativePath.length; i++) {
+					const key = fullRelativePath[i];
+					if (!drilledObject) {
+						continue;
+					}
+
+					// Fill all entry unfilled references
+					const transformator = Transformator.get(drilledObject.constructor);
+					if (transformator.useSerializationSymbolIterator) {
+						if (i + transformator.symbolIteratorEntryDepth === fullRelativePath.length) {
+							const entries = iterableInstanceContents.get(drilledObject);
+							if (!entries) {
+								continue;
+							}
+
+							injectInstanceUnfilledReferences(entries);
+						}
+					}
+
+					// Write the reference to an endpoint
+					const keyIsLast = key === fullRelativePath.at(-1);
+					if (keyIsLast) {
+						drilledObject = drilledObject[key];
+						break;
+					}
+
+					// Drill the object
+					if (transformator.useSerializationSymbolIterator) {
+						const entries = iterableInstanceContents.get(drilledObject);
+						if (!entries) {
+							throw Error('No entries');
+						}
+						drilledObject = entries[Number(key)];
+					} else {
+						drilledObject = drilledObject[key];
+					}
+				}
+			}
+
+			// Apply all entries to their corresponding iterable objects 
+			for (const [reference, entries] of iterableInstanceContents) {
+				const transformator = Transformator.get(reference.constructor);
+				for (const entry of entries) {
+					transformator.setter(reference, entry);
+				}
+			}
+		}
 	}
 
 	public static duplicate<T>(value: T) {
@@ -695,13 +682,11 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		return [representer, resolveReference];
 	}
 
-	// private static readonly referenceInjectionFlag = Symbol('ReferenceInjectionAwaiter');
 	private static readonly ReferenceInjection = class ReferenceInjection {};
 }
 
 export namespace Objectra {
 	export type Identifier = Constructor | Function | string;
-
 	export type Reference = symbol | IterableEntity | Function;
 
 	export type GetContentType<T extends Objectra> = T extends Objectra<infer U> ? U : never;
@@ -740,7 +725,7 @@ export namespace Objectra {
 	export type ReferenceAppearancePathMap = Map<Objectra.Reference, IterableEntity[][]>;
 	export interface ObjectReferenceData {
 		readonly referenceAppearancePathMap: ReferenceAppearancePathMap;
-		readonly repeatingReferences: Objectra.Reference[];
+		readonly repeatingReferences: Set<Objectra.Reference>;
 	}
 
 	export interface Model {
