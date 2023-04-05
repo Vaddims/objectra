@@ -62,119 +62,6 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		}
 	}
 
-	public get isStructureEndpoint() {
-		return isES3Primitive(this.content);
-	}
-
-	public toModel(): Objectra.Model {
-		const createModel = (objectra: Objectra) => {
-			if (objectra.identifier && !Transformator.exists(objectra.identifier, objectra.overload)) {
-				throw new TransformatorNotFoundError(objectra.identifier);
-			}
-			
-			const model: Writeable<Objectra.Model> = {};
-			
-			if (typeof objectra.identifier === 'string') {
-				model.name = objectra.identifier;
-			} else if (typeof objectra.identifier === 'function') {
-				if (objectra.identifierIsConstructor) {
-					model.type = objectra.identifier.name;
-				} else {
-					model.type = Function.name;
-					model.name = objectra.identifier.name;
-				}
-			}
-
-			if (typeof objectra.overload === 'number') {
-				model.overload = objectra.overload;
-			}
-
-			if (typeof objectra.id === 'number') {
-				model.id = objectra.id;
-			}
-
-			if (objectra.hoistingReferences?.length > 0) {
-				model.hoisitings = objectra.hoistingReferences.map(createModel);
-			}
-
-			if (objectra.isStructureEndpoint) {
-				model.content = objectra.content;
-			} else if (objectra.content) {
-				model.content = {};
-				for (const key in objectra.content) {
-					model.content[key] = createModel(objectra.content[key]);
-				}
-			}
-			
-			model.content = {};
-			if (objectra.content) {
-				if (objectra.isStructureEndpoint) {
-					model.content = objectra.content;
-				} else {
-					for (const key in objectra.content) {
-						model.content[key] = createModel(objectra.content[key]);
-					}
-				}
-
-			}
-			
-			return model as Objectra.Model;
-		}
-
-		return createModel(this);
-	}
-
-	public stringify(replacer?: (string | number)[] | null, space?: string | number) {
-		return JSON.stringify(this.toModel(), replacer, space);
-	}
-
-	public static parseModel(model: Objectra.Model | string): Objectra {
-		const parseModel = (target: Objectra.Model): Objectra => {
-			const constructObjectra = (identifier: Objectra.Identifier, isConstructor: boolean) => {
-				const hoistings: Objectra[] = Array.from(target.hoisitings?.map(parseModel) ?? []);
-
-				let content: Objectra.ContentStructure<Objectra>;
-
-				if (isES3Primitive(target.content)) {
-					content = target.content;
-				} else if (Array.isArray(target.content)) {
-					content = target.content.map(parseModel); 
-				} else {
-					for (const key in target.content) {
-						content = {};
-						content[key] = parseModel(target.content[key]);
-					}
-				}
-				
-				return new Objectra({
-					content,
-					id: target.id,
-					identifier,
-					identifierIsConstructor: isConstructor,
-					hoistingReferences: hoistings,
-					overload: target.overload,
-				});
-			}
-
-			if (target.type) {
-				const targetStringIdentifier = typeof target.name === 'string' ? target.name : target.type;
-
-				if (typeof target.name === 'string') {
-					const transformator = Transformator.getStaticByStringType(target.name, target.overload);
-					return constructObjectra(transformator.type, false);
-				}
-
-				const transformator = Transformator.getStaticByStringType(targetStringIdentifier, target.overload);
-				return constructObjectra(transformator.type, true);
-			}
-
-			throw new Error('Parsing model by instance specification name is not supported yet');
-			// TODO ADD model parsing for instance specification names
-		}
-
-		return parseModel(typeof model === 'string' ? JSON.parse(model) : model);
-	}
-
 	private get isReferenceDependence() {
 		return typeof this.id !== 'undefined' && typeof this.content === 'undefined';
 	}
@@ -183,212 +70,11 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		return typeof this.id !== 'undefined' && typeof this.content !== 'undefined';
 	}
 
-	private static isIterableEntity(target: unknown): target is IterableEntity {
-		return typeof target === 'object' && target !== null;
+	public get isStructureEndpoint() {
+		return isES3Primitive(this.content);
 	}
 
-	private static isValueReference(target: unknown): target is Objectra.Reference {
-		return Objectra.isIterableEntity(target) || typeof target === 'function' || typeof target === 'symbol';
-	}
-
-	public static getObjectData(value: unknown) {
-		const referenceAppearancePathMap: Objectra.ReferenceAppearancePathMap = new Map();
-		const repeatingReferences = new Set<Objectra.Reference>();
-		let actualDepth = 0; // The depth with circular references counting in (Infinite when circular)
-		let shallowDepth = 0; // The depth with circular reference block
-		analyzeValue(value);
-
-		return {
-			referenceAppearancePathMap,
-			repeatingReferences,
-			actualDepth,
-			shallowDepth,
-		}
-
-		function analyzeValue(target: unknown, pathStack: IterableEntity[] = []) {
-			if (!Objectra.isValueReference(target) || typeof target.constructor !== 'function') {
-				return;
-			}
-
-			const currentPathStack = [...pathStack];
-			const transformator = Transformator.get(target.constructor);
-			const registeredApearencePaths = referenceAppearancePathMap.get(target);
-
-			if (registeredApearencePaths) {
-				repeatingReferences.add(target);
-				if (Objectra.isIterableEntity(target) && pathStack.includes(target)) {
-					actualDepth = Infinity;
-					return; // The object has circular reference to itself
-				}
-			} else {
-				referenceAppearancePathMap.set(target, [currentPathStack]);
-			}
-		
-			if (shallowDepth < currentPathStack.length) {
-				shallowDepth++;
-			}
-
-			if (actualDepth < currentPathStack.length) {
-				actualDepth++;
-			}
-			
-			if (typeof target === 'symbol' || typeof target === 'function') {
-				return;
-			}
-
-			const subfieldPath = [...pathStack, target];
-
-			if (Array.isArray(target)) {
-				target.forEach(element => analyzeValue(element, subfieldPath));
-				return;
-			}
-
-			if (transformator.useSerializationSymbolIterator && typeof target[Symbol.iterator] === 'function') {
-				const entries = (target as IndexableObject<any>)[Symbol.iterator]();
-				for (const entry of entries) {
-					analyzeValue(entry, subfieldPath);
-				}
-				return;
-			} 
-
-			const indexableObjectKeys = Object.getOwnPropertyNames(target);
-			for (const key of indexableObjectKeys) {
-				analyzeValue(target[key], subfieldPath);
-			}
-		}
-	}
-
-	private static getReferenceCommonParent(referenceAppearancePaths: IterableEntity[][]) {
-		const referencePath = referenceAppearancePaths[0];
-		for (let i = 0; i < referencePath.length - 1; i++) {
-			const nextIndex = i + 1;
-			const parallelPathElements = referenceAppearancePaths.map(element => element[nextIndex]);
-			const pathsShareParent = everyArrayElementIsEqual(parallelPathElements);
-			if (pathsShareParent) {
-				continue;
-			}
-
-			return referencePath[i];
-		}
-	} 
-
-	private static getReferenceHoistingParents(objectReferenceData: Objectra.ObjectReferenceData) {
-		const { repeatingReferences, referenceAppearancePathMap } = objectReferenceData;
-		const referenceHoistingParents = new Map<Objectra.Reference, Objectra.Reference>();
-
-		for (const repeatingReference of repeatingReferences) {
-			const referenceAppearancePaths = referenceAppearancePathMap.get(repeatingReference)!;
-			const referenceParent = Objectra.getReferenceCommonParent(referenceAppearancePaths);
-			if (referenceParent) {
-				referenceHoistingParents.set(repeatingReference, referenceParent);
-			}
-		}
-
-		return referenceHoistingParents;
-	}
-
-	public static from<T>(value: T): Objectra<Objectra.Content<T>, T> {
-		const objectReferenceData = Objectra.getObjectData(value);
-		const referenceHoistingParentMap = Objectra.getReferenceHoistingParents(objectReferenceData);
-		const referableReferences = new Set<Objectra.Reference>();
-		
-		const { repeatingReferences } = objectReferenceData;
-		const referenceIdentifiers = new Map<Objectra.Reference, number>(
-			Array.from(repeatingReferences).map((reference, index) => [reference, index])
-		);
-
-		const objectraValueSerialization: Objectra.ValueSerialization = <T>(instance: T) => {
-			if (typeof instance === 'undefined') {
-				return new Objectra<Objectra.Content<T>>({ content: undefined });
-			}
-
-			if (instance === null) {
-				return new Objectra<Objectra.Content<T>>({ content: null as Objectra.Content<any> });
-			}
-
-			const objectInstance = instance as T & Objectra.Reference; // TODO Check for primitives
-			
-			if (typeof objectInstance.constructor !== 'function') {
-				throw new Error(`Can not objectrafy an object inherited value without a constructor`);
-			}
-
-			const instanceIsReference = Objectra.isValueReference(objectInstance);
-			const referenceIsOrigin = 
-				instanceIsReference
-				&& repeatingReferences.has(objectInstance)
-				&& !referableReferences.has(objectInstance);
-
-			const referenceIsClassConstructor = typeof objectInstance === 'function' && FunctionTypeDeterminant.isConstructor(objectInstance);
-
-			const referenceShouldInstantiate =
-				typeof objectInstance === 'function' && FunctionTypeDeterminant.isConstructor(objectInstance)
-				? false
-				: referenceIsOrigin;
-
-			if (!referenceShouldInstantiate && repeatingReferences.has(objectInstance) && referableReferences.has(objectInstance)) {
-				const id = referenceIdentifiers.get(objectInstance);
-				if (typeof id === 'undefined') {
-					throw new Error('Internal id not found')
-				}
-
-				return new Objectra({ id });
-			}
-			
-			if (!referenceIsClassConstructor) {
-				referableReferences.add(objectInstance);
-			}
-			
-			const instanceTransformator = Transformator.get(objectInstance.constructor as Constructor);
-			const superTransformators = Transformator.getSuperTransformators(objectInstance.constructor as Constructor);
-
-			const transformators: Transformator[] = [...superTransformators];
-			if (instanceTransformator) {
-				transformators.unshift(instanceTransformator);
-			}
-
-			const serializationSuperTransformator = Array.from(transformators).find(transformator => transformator.serialize);
-			if (!serializationSuperTransformator) {
-				throw new TransformatorMatchNotFoundError(objectInstance.constructor);
-			}
-
-			const instanceHoistingReferences = Array
-				.from(referenceHoistingParentMap)
-				.filter(([, parent]) => parent === objectInstance)
-				.map(([reference]) => reference);
-
-			const instanceObjectraHoistings = instanceHoistingReferences.map(objectraValueSerialization);
-
-			const id = referenceShouldInstantiate ? referenceIdentifiers.get(objectInstance) : void 0;
-			
-			if (typeof objectInstance === 'function') {
-				return new Objectra({
-					identifier: objectInstance,
-					id,
-				});
-			} 
-
-			const objectraContent = serializationSuperTransformator.serialize!({
-				instance: objectInstance,
-				objectrafy: objectraValueSerialization,
-				instanceTransformator,
-			}) as Objectra.Content<T>;
-
-			const objectra = new Objectra({
-				identifier: objectInstance.constructor, 
-				identifierIsConstructor: true,
-				content: objectraContent,
-				hoistingReferences: instanceObjectraHoistings.length ? instanceObjectraHoistings : void 0,
-				id,
-			});
-
-			return objectra;
-		}
-
-		const result = objectraValueSerialization(value);
-		return result;
-	}
-
-	public instantiate(): InstanceType {
+	public compose(): InstanceType {
 		const resolvedReferenceMap = new Map<Objectra, Objectra.Reference>();
 		const awaitingReferenceObjectraMap = new Map<Objectra, string[]>();
 		const iterableInstanceContents = new Map<Objectra.Reference, unknown[]>();
@@ -638,11 +324,56 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		}
 	}
 
-	public static duplicate<T>(value: T) {
-		return Objectra.from(value).instantiate();
-	}
+	public toModel(): Objectra.Model {
+		const createModel = (objectra: Objectra) => {
+			if (objectra.identifier && !Transformator.exists(objectra.identifier, objectra.overload)) {
+				throw new TransformatorNotFoundError(objectra.identifier);
+			}
+			
+			const model: Writeable<Objectra.Model> = {};
+			
+			if (typeof objectra.identifier === 'string') {
+				model.name = objectra.identifier;
+			} else if (typeof objectra.identifier === 'function') {
+				if (objectra.identifierIsConstructor) {
+					model.type = objectra.identifier.name;
+				} else {
+					model.type = Function.name;
+					model.name = objectra.identifier.name;
+				}
+			}
 
-	private createBackloopReferenceDuplex(): Objectra.BackloopDuplex<ContentType> {
+			if (typeof objectra.overload === 'number') {
+				model.overload = objectra.overload;
+			}
+
+			if (typeof objectra.id === 'number') {
+				model.id = objectra.id;
+			}
+
+			if (objectra.hoistingReferences?.length > 0) {
+				model.hoisitings = objectra.hoistingReferences.map(createModel);
+			}
+			
+			model.content = {};
+			if (objectra.content) {
+				if (objectra.isStructureEndpoint) {
+					model.content = objectra.content;
+				} else {
+					for (const key in objectra.content) {
+						model.content[key] = createModel(objectra.content[key]);
+					}
+				}
+
+			}
+			
+			return model as Objectra.Model;
+		}
+
+		return createModel(this);
+	}
+	
+	protected createBackloopReferenceDuplex(): Objectra.BackloopDuplex<ContentType> {
 		type Representer = {} | [];
 		const referenceMap = new Map<Representer, Objectra<any>>();
 
@@ -680,6 +411,262 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 
 		const representer: Backloop.Reference<typeof this> = createReference(this); // TS requires explicit type
 		return [representer, resolveReference];
+	}
+
+	public static from<T>(value: T): Objectra<Objectra.Content<T>, T> {
+		const objectReferenceData = Objectra.getObjectData(value);
+		const referenceHoistingParentMap = Objectra.getReferenceHoistingParents(objectReferenceData);
+		const referableReferences = new Set<Objectra.Reference>();
+		
+		const { repeatingReferences } = objectReferenceData;
+		const referenceIdentifiers = new Map<Objectra.Reference, number>(
+			Array.from(repeatingReferences).map((reference, index) => [reference, index])
+		);
+
+		const objectraValueSerialization: Objectra.ValueSerialization = <T>(instance: T) => {
+			if (typeof instance === 'undefined') {
+				return new Objectra<Objectra.Content<T>>({ content: undefined });
+			}
+
+			if (instance === null) {
+				return new Objectra<Objectra.Content<T>>({ content: null as Objectra.Content<any> });
+			}
+
+			const objectInstance = instance as T & Objectra.Reference; // TODO Check for primitives
+			
+			if (typeof objectInstance.constructor !== 'function') {
+				throw new Error(`Can not objectrafy an object inherited value without a constructor`);
+			}
+
+			const instanceIsReference = Objectra.isValueReference(objectInstance);
+			const referenceIsOrigin = 
+				instanceIsReference
+				&& repeatingReferences.has(objectInstance)
+				&& !referableReferences.has(objectInstance);
+
+			const referenceIsClassConstructor = typeof objectInstance === 'function' && FunctionTypeDeterminant.isConstructor(objectInstance);
+
+			const referenceShouldInstantiate =
+				typeof objectInstance === 'function' && FunctionTypeDeterminant.isConstructor(objectInstance)
+				? false
+				: referenceIsOrigin;
+
+			if (!referenceShouldInstantiate && repeatingReferences.has(objectInstance) && referableReferences.has(objectInstance)) {
+				const id = referenceIdentifiers.get(objectInstance);
+				if (typeof id === 'undefined') {
+					throw new Error('Internal id not found')
+				}
+
+				return new Objectra({ id });
+			}
+			
+			if (!referenceIsClassConstructor) {
+				referableReferences.add(objectInstance);
+			}
+			
+			const instanceTransformator = Transformator.get(objectInstance.constructor as Constructor);
+			const superTransformators = Transformator.getSuperTransformators(objectInstance.constructor as Constructor);
+
+			const transformators: Transformator[] = [...superTransformators];
+			if (instanceTransformator) {
+				transformators.unshift(instanceTransformator);
+			}
+
+			const serializationSuperTransformator = Array.from(transformators).find(transformator => transformator.serialize);
+			if (!serializationSuperTransformator) {
+				throw new TransformatorMatchNotFoundError(objectInstance.constructor);
+			}
+
+			const instanceHoistingReferences = Array
+				.from(referenceHoistingParentMap)
+				.filter(([, parent]) => parent === objectInstance)
+				.map(([reference]) => reference);
+
+			const instanceObjectraHoistings = instanceHoistingReferences.map(objectraValueSerialization);
+
+			const id = referenceShouldInstantiate ? referenceIdentifiers.get(objectInstance) : void 0;
+			
+			if (typeof objectInstance === 'function') {
+				return new Objectra({
+					identifier: objectInstance,
+					id,
+				});
+			} 
+
+			const objectraContent = serializationSuperTransformator.serialize!({
+				instance: objectInstance,
+				objectrafy: objectraValueSerialization,
+				instanceTransformator,
+			}) as Objectra.Content<T>;
+
+			const objectra = new Objectra({
+				identifier: objectInstance.constructor, 
+				identifierIsConstructor: true,
+				content: objectraContent,
+				hoistingReferences: instanceObjectraHoistings.length ? instanceObjectraHoistings : void 0,
+				id,
+			});
+
+			return objectra;
+		}
+
+		const result = objectraValueSerialization(value);
+		return result;
+	}
+
+	public static fromModel(model: Objectra.Model | string): Objectra {
+		const parseModel = (target: Objectra.Model): Objectra => {
+			const constructObjectra = (identifier: Objectra.Identifier, isConstructor: boolean) => {
+				const hoistings: Objectra[] = Array.from(target.hoisitings?.map(parseModel) ?? []);
+
+				let content: Objectra.ContentStructure<Objectra>;
+
+				if (isES3Primitive(target.content)) {
+					content = target.content;
+				} else if (Array.isArray(target.content)) {
+					content = target.content.map(parseModel); 
+				} else {
+					for (const key in target.content) {
+						content = {};
+						content[key] = parseModel(target.content[key]);
+					}
+				}
+				
+				return new Objectra({
+					content,
+					id: target.id,
+					identifier,
+					identifierIsConstructor: isConstructor,
+					hoistingReferences: hoistings,
+					overload: target.overload,
+				});
+			}
+
+			if (target.type) {
+				const targetStringIdentifier = typeof target.name === 'string' ? target.name : target.type;
+
+				if (typeof target.name === 'string') {
+					const transformator = Transformator.getStaticByStringType(target.name, target.overload);
+					return constructObjectra(transformator.type, false);
+				}
+
+				const transformator = Transformator.getStaticByStringType(targetStringIdentifier, target.overload);
+				return constructObjectra(transformator.type, true);
+			}
+
+			throw new Error('Parsing model by instance specification name is not supported yet');
+			// TODO ADD model parsing for instance specification names
+		}
+
+		return parseModel(typeof model === 'string' ? JSON.parse(model) : model);
+	}
+
+	public static duplicate<T>(value: T) {
+		return Objectra.from(value).compose();
+	}
+
+	private static isIterableEntity(target: unknown): target is IterableEntity {
+		return typeof target === 'object' && target !== null;
+	}
+
+	private static isValueReference(target: unknown): target is Objectra.Reference {
+		return Objectra.isIterableEntity(target) || typeof target === 'function' || typeof target === 'symbol';
+	}
+
+	public static getObjectData(value: unknown) {
+		const referenceAppearancePathMap: Objectra.ReferenceAppearancePathMap = new Map();
+		const repeatingReferences = new Set<Objectra.Reference>();
+		let actualDepth = 0; // The depth with circular references counting in (Infinite when circular)
+		let shallowDepth = 0; // The depth with circular reference block
+		analyzeValue(value);
+
+		return {
+			referenceAppearancePathMap,
+			repeatingReferences,
+			actualDepth,
+			shallowDepth,
+		}
+
+		function analyzeValue(target: unknown, pathStack: IterableEntity[] = []) {
+			if (!Objectra.isValueReference(target) || typeof target.constructor !== 'function') {
+				return;
+			}
+
+			const currentPathStack = [...pathStack];
+			const transformator = Transformator.get(target.constructor);
+			const registeredApearencePaths = referenceAppearancePathMap.get(target);
+
+			if (registeredApearencePaths) {
+				repeatingReferences.add(target);
+				if (Objectra.isIterableEntity(target) && pathStack.includes(target)) {
+					actualDepth = Infinity;
+					return; // The object has circular reference to itself
+				}
+			} else {
+				referenceAppearancePathMap.set(target, [currentPathStack]);
+			}
+		
+			if (shallowDepth < currentPathStack.length) {
+				shallowDepth++;
+			}
+
+			if (actualDepth < currentPathStack.length) {
+				actualDepth++;
+			}
+			
+			if (typeof target === 'symbol' || typeof target === 'function') {
+				return;
+			}
+
+			const subfieldPath = [...pathStack, target];
+
+			if (Array.isArray(target)) {
+				target.forEach(element => analyzeValue(element, subfieldPath));
+				return;
+			}
+
+			if (transformator.useSerializationSymbolIterator && typeof target[Symbol.iterator] === 'function') {
+				const entries = (target as IndexableObject<any>)[Symbol.iterator]();
+				for (const entry of entries) {
+					analyzeValue(entry, subfieldPath);
+				}
+				return;
+			} 
+
+			const indexableObjectKeys = Object.getOwnPropertyNames(target);
+			for (const key of indexableObjectKeys) {
+				analyzeValue(target[key], subfieldPath);
+			}
+		}
+	}
+
+	private static getReferenceCommonParent(referenceAppearancePaths: IterableEntity[][]) {
+		const referencePath = referenceAppearancePaths[0];
+		for (let i = 0; i < referencePath.length - 1; i++) {
+			const nextIndex = i + 1;
+			const parallelPathElements = referenceAppearancePaths.map(element => element[nextIndex]);
+			const pathsShareParent = everyArrayElementIsEqual(parallelPathElements);
+			if (pathsShareParent) {
+				continue;
+			}
+
+			return referencePath[i];
+		}
+	} 
+
+	private static getReferenceHoistingParents(objectReferenceData: Objectra.ObjectReferenceData) {
+		const { repeatingReferences, referenceAppearancePathMap } = objectReferenceData;
+		const referenceHoistingParents = new Map<Objectra.Reference, Objectra.Reference>();
+
+		for (const repeatingReference of repeatingReferences) {
+			const referenceAppearancePaths = referenceAppearancePathMap.get(repeatingReference)!;
+			const referenceParent = Objectra.getReferenceCommonParent(referenceAppearancePaths);
+			if (referenceParent) {
+				referenceHoistingParents.set(repeatingReference, referenceParent);
+			}
+		}
+
+		return referenceHoistingParents;
 	}
 
 	private static readonly ReferenceInjection = class ReferenceInjection {};
