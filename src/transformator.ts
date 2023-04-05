@@ -1,5 +1,5 @@
 import { Objectra } from ".";
-import { getConstructorSuperConstructors, isClass } from './utils';
+import { getConstructorSuperConstructors, FunctionTypeDeterminant } from './utils';
 import type { Constructor, Writeable } from "./types/util.types";
 import { 
   ArgumentPassthroughIndexAlreadyExistsError,
@@ -219,7 +219,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
       return Object;
     }
 
-    if (isClass(identifer)) {
+    if (FunctionTypeDeterminant.isConstructor(identifer)) {
       return identifer;
     }
 
