@@ -1,4 +1,4 @@
-import { everyArrayElementIsEqual, FunctionType, functionType, isClass, isES3Primitive, isES5Primitive } from "./utils";
+import { everyArrayElementIsEqual, FunctionType, FunctionTypeDeterminant, getFunctionType, isES3Primitive, isES5Primitive } from "./utils";
 import { Backloop } from "./types/backloop.types";
 import { Transformator } from "./transformator";
 import './transformators';
@@ -318,10 +318,10 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				&& repeatingReferences.has(objectInstance)
 				&& !referableReferences.has(objectInstance);
 
-			const referenceIsClassConstructor = typeof objectInstance === 'function' && isClass(objectInstance);
+			const referenceIsClassConstructor = typeof objectInstance === 'function' && FunctionTypeDeterminant.isConstructor(objectInstance);
 
 			const referenceShouldInstantiate =
-				typeof objectInstance === 'function' && isClass(objectInstance)
+				typeof objectInstance === 'function' && FunctionTypeDeterminant.isConstructor(objectInstance)
 				? false
 				: referenceIsOrigin;
 
@@ -467,7 +467,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				}
 
 				// TODO Overhaul
-				if (!isClass(transformator.type)) {
+				if (!FunctionTypeDeterminant.isConstructor(transformator.type)) {
 					throw new Error(`Can not get superclasses of function`);
 				}
 				
@@ -559,7 +559,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		function typeConstructorGenerator(transformator: Transformator<Constructor | Function>) {
 			return function (...typeArguments: unknown[]) {
 				try {
-					if (isClass(transformator.type)) {
+					if (FunctionTypeDeterminant.isConstructor(transformator.type)) {
 						return new transformator.type(...typeArguments);
 					}
 	

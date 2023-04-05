@@ -36,37 +36,49 @@ export function removeUndefinedProperties(value: IndexableObject<any>) {
 export enum FunctionType {
   Constructor = 'constructor',
   Function = 'function',
+  Generator = 'generator',
   Async = 'async',
   Arrow = 'arrow',
 }
 
-export function functionType(value: Function): FunctionType {
+function *generatorFunctionSample() {}
+const generatorConstructor = generatorFunctionSample.constructor;
+export function getFunctionType(value: Function): FunctionType {
   if (value.prototype) {
     const prototypeDescriptor = Object.getOwnPropertyDescriptor(value, 'prototype');
-    if (!prototypeDescriptor) {
-      throw new Error(`${value.name} does not have a prototype descriptor`);
-    }
 
-
-    if (!prototypeDescriptor.writable) {
+    if (prototypeDescriptor && !prototypeDescriptor.writable) {
       const unconstructableClasses: Function[] = [Symbol, BigInt];
       if (!unconstructableClasses.includes(value)) {
         return FunctionType.Constructor;
       }
     }
 
+    if (value.constructor === generatorConstructor) {
+      return FunctionType.Generator;
+    }
+
     return FunctionType.Function;
   }
 
-  return value.constructor.name === 'AsyncFunction' ? FunctionType.Async : FunctionType.Arrow;
+  if (value.constructor.name === 'AsyncFunction') {
+    return FunctionType.Async;
+  }
+
+  return FunctionType.Arrow;
 }
 
-export function isClass(value: Function): value is Constructor {
-  const unconstructableClasses: Function[] = [Symbol, BigInt];
-  if (unconstructableClasses.includes(value)) {
-    return false;
-  } else {
-    return functionType(value) === FunctionType.Constructor;
+export const FunctionTypeDeterminant = {
+  isConstructor(value: Function): value is Constructor {
+    const unconstructableClasses: Function[] = [Symbol, BigInt];
+    if (unconstructableClasses.includes(value)) {
+      return false;
+    }
+      
+    return getFunctionType(value) === FunctionType.Constructor;
+  },
+  isGeneratorFunction(value: Function): value is GeneratorFunction {
+    return getFunctionType(value) === FunctionType.Generator;
   }
 }
 
