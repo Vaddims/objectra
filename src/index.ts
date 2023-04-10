@@ -840,17 +840,3 @@ export * as errors from './errors';
 export * as utils from './utils';
 export * as transformators from './transformators';
 export { Transformator } from './transformator';
-
-const number = 42;
-const string = 'Hello world';
-const boolean = true;
-const complexMap = new Map<string, unknown>([
-	['number', number],
-	['string', string],
-	['boolean', boolean],
-	['array', [number, string, boolean]],
-	['object', { number, string, boolean }],
-	['set', new Set([number, string, boolean])],
-]);
-
-console.dir(Objectra.from(complexMap).descendantObjectras.size)
