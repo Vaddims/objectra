@@ -1,8 +1,10 @@
 import { everyArrayElementIsEqual, FunctionType, FunctionTypeDeterminant, getFunctionType, isES3Primitive, isES5Primitive } from "./utils";
+import { ObjectraCluster, ObjectraDescriptor, ObjectraDescriptorTuple } from "./objectra-cluster";
 import { Backloop } from "./types/backloop.types";
 import { Transformator } from "./transformator";
 import './transformators';
 
+import * as util from 'util';
 import {
 	InvalidPassthroughArgumentError, 
 	InstantiationMethodDoesNotExistError,
@@ -23,18 +25,27 @@ import type {
 } from "./types/util.types";
 
 export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Content<any>, InstanceType = any> {
-	private readonly identifier?: Objectra.Identifier;
-	private readonly identifierIsConstructor: boolean;
-	private readonly overload?: number;
-
-	private readonly id?: number;
+	public readonly id?: number;
+	public readonly identifier?: Objectra.Identifier;
+	public readonly overload?: number;
 	private readonly content?: ContentType;
+	
+	public readonly identifierIsConstructor: boolean;
+	public readonly isReferenceHoist: boolean;
 	private readonly hoistingReferences: Objectra[] = [];
 
+	private cachedChildObjectraCluster?: Objectra.Cluster;
+	private cachedDescendantObjectraCluster?: Objectra.Cluster;
+
 	private constructor(init: Objectra.Init<ContentType>) {
-		const { identifier, overload } = init;
+		const { 
+			identifier, 
+			overload, 
+			isReferenceHoist = false
+		} = init;
 
 		this.identifierIsConstructor = false;
+		this.isReferenceHoist = isReferenceHoist;
 
 		if (identifier) {
 			if (typeof identifier !== 'string' && init.identifierIsConstructor) {
@@ -62,16 +73,100 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		}
 	}
 
-	private get isReferenceDependence() {
-		return typeof this.id !== 'undefined' && typeof this.content === 'undefined';
-	}
-
-	private get isReferenceSource() {
-		return typeof this.id !== 'undefined' && typeof this.content !== 'undefined';
-	}
-
 	public get isStructureEndpoint() {
 		return isES3Primitive(this.content);
+	}
+
+	public get isDeclaration() {
+		return 'content' in this;
+	}
+
+	public get isConsumer() {
+		return typeof this.id === 'number' && !('content' in this);
+	}
+
+	public get childObjectras() {
+		if (this.cachedChildObjectraCluster) {
+			return this.cachedChildObjectraCluster;
+		}
+
+		if (!this.content || typeof this.content !== 'object' || this.content === null) {
+			return this.cachedChildObjectraCluster = new Objectra.Cluster();
+		}
+		
+		if (this.isStructureEndpoint) {
+			return
+		}
+		
+		const objectraDescriptorTuples: ObjectraDescriptorTuple[] = [];
+		const entryTuples = Object.entries(this.content as IndexableObject<Objectra>);
+		for (const [ key, subObjectra ] of entryTuples) {
+			objectraDescriptorTuples.push([ subObjectra, {
+				path: [key],
+			} ]);
+		}
+
+		return new Objectra.Cluster(objectraDescriptorTuples)
+	}
+
+	public get descendantObjectras() {
+		if (this.cachedDescendantObjectraCluster) {
+			return this.cachedDescendantObjectraCluster;
+		}
+
+		if (!this.content || typeof this.content !== 'object' || this.content === null) {
+			return this.cachedChildObjectraCluster = new Objectra.Cluster();
+		}
+
+		const objectraDescriptorTuples: ObjectraDescriptorTuple[] = [];
+		registerSubTuples(this);
+		
+		for (let i = 0; i < objectraDescriptorTuples.length; i++) {
+			registerSubTuples(...objectraDescriptorTuples[i]);
+		}
+		
+		function registerSubTuples(objectra: Objectra, descriptor?: ObjectraDescriptor) {
+			const {
+				path = [],
+			} = descriptor ?? {};
+
+			if (objectra.isStructureEndpoint) {
+				return;
+			}
+
+			for (const hoistingObjectra of objectra.hoistingReferences) {
+				objectraDescriptorTuples.push([ hoistingObjectra, { 
+					path: [...path],
+				} ]);
+			}
+
+			const entryTuples = Object.entries(objectra.content as IndexableObject<Objectra>);
+			for (const [ key, subObjectra ] of entryTuples) {
+				objectraDescriptorTuples.push([ subObjectra, {
+					path: path.concat(key),
+				} ]);
+			}
+		}
+
+		return new Objectra.Cluster(objectraDescriptorTuples);
+	}
+
+	public getContentReferenceBackloop() {
+		const duplex = this.createBackloopReferenceDuplex();
+		return duplex;
+	}
+
+	public contentIsInstanceOf(constructor: Constructor): boolean {
+		if (!this.identifier) {
+			return false;
+		}
+
+		const contentTransformator = Transformator.findAvailable(this.identifier, this.overload);	
+		if (!contentTransformator) {
+			return false;
+		}
+
+		return constructor === contentTransformator.type;
 	}
 
 	public compose(): InstanceType {
@@ -83,7 +178,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 
 		const objectraValueInstantiation: Objectra.ValueInstantiation = (objectra) => {
 			// Block circular instantiation
-			if (objectra.isReferenceDependence) {
+			if (objectra.isConsumer) {
 				const resolvedInstance = getResolvedInstance(objectra);
 				if (resolvedInstance) {
 					return resolvedInstance;
@@ -122,9 +217,9 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				objectra.hoistingReferences.forEach((objectra) => hoistingMap.set(objectra.id!, objectra));
 				
 				if (transformator && transformator.instantiate) {
-					if (objectra.isReferenceSource) {
+					if (objectra.isDeclaration) {
 						const instance = constructType();
-						if (objectra.isReferenceSource) {
+						if (objectra.isDeclaration) {
 							resolvedReferenceMap.set(objectra, instance);
 						}
 
@@ -135,7 +230,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 					}
 
 					const instance = transformator.instantiate(createInstantiationBridge(transformator));
-					if (objectra.isReferenceSource) {
+					if (objectra.isDeclaration) {
 						resolvedReferenceMap.set(objectra, instance);
 					}
 
@@ -145,7 +240,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				const useForceArgumentPassthrough = transformator.ignoreDefaultArgumentBehaviour && transformator.argumentPassthrough;
 				if (isES5Primitive(objectra.content) && (typeConstructorParams === 1 || useForceArgumentPassthrough)) {
 					const instance = constructType(objectra.content);
-					if (objectra.isReferenceSource) {
+					if (objectra.isDeclaration) {
 						resolvedReferenceMap.set(objectra, instance);
 					}
 
@@ -180,7 +275,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 					const args = propKeys.map(key => value[key]);
 					
 					const instance = constructType(...args);
-					if (objectra.isReferenceSource) {
+					if (objectra.isDeclaration) {
 						resolvedReferenceMap.set(objectra, instance);
 					}
 
@@ -200,7 +295,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 					const value = instantiationTransformator.instantiate!(createInstantiationBridge(transformator));
 
 					const instance = constructType(value);
-					if (objectra.isReferenceSource) {
+					if (objectra.isDeclaration) {
 						resolvedReferenceMap.set(objectra, instance);
 					}
 
@@ -209,7 +304,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 
 				if (typeConstructorParams === 0) {
 					const instance = new transformator.type();
-					if (objectra.isReferenceSource) {
+					if (objectra.isDeclaration) {
 						resolvedReferenceMap.set(objectra, instance);
 					}
 
@@ -373,7 +468,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		return createModel(this);
 	}
 	
-	protected createBackloopReferenceDuplex(): Objectra.BackloopDuplex<ContentType> {
+	private createBackloopReferenceDuplex(): Objectra.BackloopDuplex<ContentType> {
 		type Representer = {} | [];
 		const referenceMap = new Map<Representer, Objectra<any>>();
 
@@ -489,6 +584,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			if (typeof objectInstance === 'function') {
 				return new Objectra({
 					identifier: objectInstance,
+					isReferenceHoist: referenceShouldInstantiate,
 					id,
 				});
 			} 
@@ -504,6 +600,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				identifierIsConstructor: true,
 				content: objectraContent,
 				hoistingReferences: instanceObjectraHoistings.length ? instanceObjectraHoistings : void 0,
+				isReferenceHoist: referenceShouldInstantiate,
 				id,
 			});
 
@@ -602,6 +699,8 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 					actualDepth = Infinity;
 					return; // The object has circular reference to itself
 				}
+
+				referenceAppearancePathMap.set(target, [...registeredApearencePaths, currentPathStack])
 			} else {
 				referenceAppearancePathMap.set(target, [currentPathStack]);
 			}
@@ -642,16 +741,17 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 
 	private static getReferenceCommonParent(referenceAppearancePaths: IterableEntity[][]) {
 		const referencePath = referenceAppearancePaths[0];
-		for (let i = 0; i < referencePath.length - 1; i++) {
-			const nextIndex = i + 1;
-			const parallelPathElements = referenceAppearancePaths.map(element => element[nextIndex]);
-			const pathsShareParent = everyArrayElementIsEqual(parallelPathElements);
-			if (pathsShareParent) {
-				continue;
-			}
+		let depth = -1;
+		let pathsShareParent = true;
 
-			return referencePath[i];
-		}
+		do {
+			depth++;
+			const nextDepth = depth + 1;
+			const parallelPathElements = referenceAppearancePaths.map(path => path[nextDepth]);
+			pathsShareParent = everyArrayElementIsEqual(parallelPathElements);
+		} while (depth < referencePath.length - 1 && pathsShareParent);
+
+		return referencePath[depth];
 	} 
 
 	private static getReferenceHoistingParents(objectReferenceData: Objectra.ObjectReferenceData) {
@@ -668,6 +768,8 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 
 		return referenceHoistingParents;
 	}
+
+	public static Cluster = ObjectraCluster;
 
 	private static readonly ReferenceInjection = class ReferenceInjection {};
 }
@@ -693,12 +795,19 @@ export namespace Objectra {
 				{ [K in keyof T]: Objectra<Content<T[K]>> }
 	);
 
+	export enum ReferenceType {
+		None,
+		Origin,
+		Depended,
+	}
+
 	export interface Init<ContentType extends Objectra.Content<any>> {
 		readonly identifier?: Identifier;
 		readonly identifierIsConstructor?: boolean;
 		readonly overload?: number;
 		readonly id?: number;
-		readonly hoistingReferences?: Objectra[] | undefined; 
+		readonly hoistingReferences?: Objectra[] | undefined;
+		readonly isReferenceHoist?: boolean;
 		readonly content?: ContentType;
 	}
 
@@ -723,9 +832,25 @@ export namespace Objectra {
 		readonly hoisitings?: Model[];
 		readonly id?: number;
 	}
+
+	export type Cluster = ObjectraCluster;
 }
 
 export * as errors from './errors';
 export * as utils from './utils';
 export * as transformators from './transformators';
 export { Transformator } from './transformator';
+
+const number = 42;
+const string = 'Hello world';
+const boolean = true;
+const complexMap = new Map<string, unknown>([
+	['number', number],
+	['string', string],
+	['boolean', boolean],
+	['array', [number, string, boolean]],
+	['object', { number, string, boolean }],
+	['set', new Set([number, string, boolean])],
+]);
+
+console.dir(Objectra.from(complexMap).descendantObjectras.size)
