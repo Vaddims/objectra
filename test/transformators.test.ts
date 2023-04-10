@@ -58,7 +58,7 @@ describe('test objectra serialization and instantiation', () => {
 
 		test('object', () => {
 			const object = { number, string, boolean };
-			const objectDuplciate = Objectra.from(object).instantiate();
+			const objectDuplciate = Objectra.from(object).compose();
 			expect(objectDuplciate).toStrictEqual(object);
 			expect(objectDuplciate).not.toBe(object);
 		});
