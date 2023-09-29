@@ -38,7 +38,7 @@ export const dateTransformator = Transformator.register(Date).configure<string>(
 export const arrayTransformator = Transformator.register(Array).configure<Objectra[]>({
   instantiator: ({ representer, instantiateRepresenter, keyPath, initialTransformator }) => {
     return representer.map((element, index) => {
-      keyPath.push(String(index));
+      keyPath.push(index.toString());
       const res = instantiateRepresenter(element as any);
       keyPath.pop();
       return res;
@@ -104,18 +104,9 @@ export const objectTransformator = Transformator.register(Object)
         result[key] = serialize(instance[key]);
       }
     }
-    
-    const propertyTransformationMask = instanceTransformator['propertyTransformationMask'];
-    const propertyTransformationWhitelist = instanceTransformator['propertyTransformationWhitelist'];
-    if (instanceTransformator['propertyTransformationMapping'] === Transformator.PropertyTransformationMapping.Inclusion) {
-      const keys = Object.getOwnPropertyNames(instance);
-      const inclusiveKeys = keys.filter(key => (
-        propertyTransformationWhitelist.includes(key) || !propertyTransformationMask.includes(key)
-      ));
-      serializeProperties(inclusiveKeys);
-    } else {
-      serializeProperties(propertyTransformationMask);
-    }
+
+    const inclusivePropertyKeyNames = instanceTransformator.getMaskedObjectPropertyNames(instance);
+    serializeProperties(inclusivePropertyKeyNames);
 
     return result;
   },
@@ -148,4 +139,13 @@ export const weakSetTransformator = Transformator.register(WeakSet).configure({
   useSerializationSymbolIterator: true,
   getter: (weakSet, entry) => weakSet.get(entry),
   setter: (weakSet, entry) => weakSet.add(entry),
+})
+
+export const weakMapTransformator = Transformator.register(WeakMap).configure({
+  ignoreDefaultArgumentBehaviour: true,
+  argumentPassthrough: false,
+  symbolIteratorEntryDepth: 2,
+  useSerializationSymbolIterator: false,
+  getter: (weakMap, entry) => weakMap.get(entry),
+  setter: (weakMap, entry) => weakMap.set(entry[0], entry[1]),
 })

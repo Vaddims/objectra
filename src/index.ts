@@ -4,7 +4,6 @@ import { Backloop } from "./types/backloop.types";
 import { Transformator } from "./transformator";
 import './transformators';
 
-import * as util from 'util';
 import {
 	InvalidPassthroughArgumentError, 
 	InstantiationMethodDoesNotExistError,
@@ -421,25 +420,25 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 
 	public toModel(): Objectra.Model {
 		const createModel = (objectra: Objectra) => {
-			if (objectra.identifier && !Transformator.exists(objectra.identifier, objectra.overload)) {
+			if (objectra.identifier && !Transformator.staticExists(objectra.identifier, objectra.overload)) {
 				throw new TransformatorNotFoundError(objectra.identifier);
 			}
 			
 			const model: Writeable<Objectra.Model> = {};
 			
 			if (typeof objectra.identifier === 'string') {
-				model.name = objectra.identifier;
+				model.n = objectra.identifier;
 			} else if (typeof objectra.identifier === 'function') {
 				if (objectra.identifierIsConstructor) {
-					model.type = objectra.identifier.name;
+					model.t = objectra.identifier.name;
 				} else {
-					model.type = Function.name;
-					model.name = objectra.identifier.name;
+					model.t = Function.name;
+					model.t = objectra.identifier.name;
 				}
 			}
 
 			if (typeof objectra.overload === 'number') {
-				model.overload = objectra.overload;
+				model.o = objectra.overload;
 			}
 
 			if (typeof objectra.id === 'number') {
@@ -447,19 +446,28 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			}
 
 			if (objectra.hoistingReferences?.length > 0) {
-				model.hoisitings = objectra.hoistingReferences.map(createModel);
+				model.h = objectra.hoistingReferences.map(createModel);
 			}
 			
-			model.content = {};
-			if (objectra.content) {
+			if (typeof objectra.content !== 'undefined') {
 				if (objectra.isStructureEndpoint) {
-					model.content = objectra.content;
+					model.c = objectra.content;
+				} else if (Array.isArray(objectra.content)) {
+					model.c = objectra.content.map(createModel);
 				} else {
+					model.c = {};
 					for (const key in objectra.content) {
-						model.content[key] = createModel(objectra.content[key]);
+						model.c[key] = createModel(objectra.content[key]);
 					}
 				}
+			}
 
+			if (objectra.identifierIsConstructor) {
+				model.iic = objectra.identifierIsConstructor;
+			}
+
+			if (objectra.isReferenceHoist) {
+				model.irh = objectra.isReferenceHoist;
 			}
 			
 			return model as Objectra.Model;
@@ -577,6 +585,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				.filter(([, parent]) => parent === objectInstance)
 				.map(([reference]) => reference);
 
+			
 			const instanceObjectraHoistings = instanceHoistingReferences.map(objectraValueSerialization);
 
 			const id = referenceShouldInstantiate ? referenceIdentifiers.get(objectInstance) : void 0;
@@ -613,45 +622,63 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 
 	public static fromModel(model: Objectra.Model | string): Objectra {
 		const parseModel = (target: Objectra.Model): Objectra => {
-			const constructObjectra = (identifier: Objectra.Identifier, isConstructor: boolean) => {
-				const hoistings: Objectra[] = Array.from(target.hoisitings?.map(parseModel) ?? []);
+			const constructObjectra = (identifier?: Objectra.Identifier) => {
+				const hoistings: Objectra[] = Array.from(target.h?.map(parseModel) ?? []);
 
-				let content: Objectra.ContentStructure<Objectra>;
+				let init: Writeable<Objectra.Init<any>> = {};
 
-				if (isES3Primitive(target.content)) {
-					content = target.content;
-				} else if (Array.isArray(target.content)) {
-					content = target.content.map(parseModel); 
-				} else {
-					for (const key in target.content) {
-						content = {};
-						content[key] = parseModel(target.content[key]);
+				if (typeof target.c !== 'undefined') {
+					if (isES3Primitive(target.c)) {
+						init.content = target.c;
+					} else if (Array.isArray(target.c)) {
+						init.content = target.c.map(parseModel); 
+					} else {
+						init.content = {};
+						for (const key in target.c) {
+							init.content[key] = parseModel(target.c[key]);
+						}
 					}
 				}
 				
 				return new Objectra({
-					content,
+					...init,
 					id: target.id,
 					identifier,
-					identifierIsConstructor: isConstructor,
+					identifierIsConstructor: target.iic ?? false,
 					hoistingReferences: hoistings,
-					overload: target.overload,
+					overload: target.o,
+					isReferenceHoist: target.irh ?? false,
 				});
 			}
 
-			if (target.type) {
-				const targetStringIdentifier = typeof target.name === 'string' ? target.name : target.type;
+			if (target.t) {
+				const targetStringIdentifier = typeof target.n === 'string' ? target.n : target.t;
 
-				if (typeof target.name === 'string') {
-					const transformator = Transformator.getStaticByStringType(target.name, target.overload);
-					return constructObjectra(transformator.type, false);
+				if (typeof target.n === 'string') {
+					const transformator = Transformator.getStaticByStringType(target.n, target.o);
+					return constructObjectra(transformator.type);
 				}
 
-				const transformator = Transformator.getStaticByStringType(targetStringIdentifier, target.overload);
-				return constructObjectra(transformator.type, true);
+				const transformator = Transformator.getStaticByStringType(targetStringIdentifier, target.o);
+				return constructObjectra(transformator.type);
 			}
 
-			throw new Error('Parsing model by instance specification name is not supported yet');
+			const projection: any = {}
+
+			if (typeof target.c !== 'undefined') {
+				projection.content = target.c;
+			}
+
+			return new Objectra({
+				...projection,
+				id: target.id,
+				identifierIsConstructor: target.iic ?? false,
+				hoistingReferences: target.h?.map(parseModel),
+				isReferenceHoist: target.irh ?? false,
+				overload: target.o,
+			})
+
+			// throw new Error('Parsing model by instance specification name is not supported yet');
 			// TODO ADD model parsing for instance specification names
 		}
 
@@ -732,7 +759,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				return;
 			} 
 
-			const indexableObjectKeys = Object.getOwnPropertyNames(target);
+			const indexableObjectKeys = transformator.getMaskedObjectPropertyNames(target)
 			for (const key of indexableObjectKeys) {
 				analyzeValue(target[key], subfieldPath);
 			}
@@ -825,12 +852,14 @@ export namespace Objectra {
 	}
 
 	export interface Model {
-		readonly type?: string; // Class constructor name
-		readonly name?: string; // Instance specification name
-		readonly overload?: number; // Overload for class / instance that have the same specification / constructor name
-		readonly content?: ContentStructure<Model> | undefined;
-		readonly hoisitings?: Model[];
+		readonly t?: string; // Class constructor name
+		readonly n?: string; // Instance specification name
+		readonly o?: number; // Overload for class / instance that have the same specification / constructor name
+		readonly c?: ContentStructure<Model> | undefined;
+		readonly h?: Model[];
 		readonly id?: number;
+		readonly irh?: boolean;
+		readonly iic?: boolean;
 	}
 
 	export type Cluster = ObjectraCluster;
