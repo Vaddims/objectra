@@ -175,13 +175,18 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		const hoistingMap = new Map<number, Objectra>();
 		const keyPath: string[] = [];
 
+		const addResolvedReference = (objectra: Objectra, reference: Objectra.Reference) => {
+			resolvedReferenceMap.set(objectra, reference);
+			return resolvedReferenceMap;
+		}
+
 		const objectraValueInstantiation: Objectra.ValueInstantiation = (objectra) => {
 			// Block circular instantiation
 			if (objectra.isConsumer) {
-				const resolvedInstance = getResolvedInstance(objectra);
-				if (resolvedInstance) {
+				try {
+					const resolvedInstance = getResolvedInstance(objectra);
 					return resolvedInstance;
-				}
+				} catch {}
 
 				const target = hoistingMap.get(objectra.id!);
 				if (!target) {
@@ -219,7 +224,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 					if (objectra.isDeclaration) {
 						const instance = constructType();
 						if (objectra.isDeclaration) {
-							resolvedReferenceMap.set(objectra, instance);
+							addResolvedReference(objectra, instance);
 						}
 
 						return transformator.instantiate({
@@ -230,7 +235,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 
 					const instance = transformator.instantiate(createInstantiationBridge(transformator));
 					if (objectra.isDeclaration) {
-						resolvedReferenceMap.set(objectra, instance);
+						addResolvedReference(objectra, instance);
 					}
 
 					return instance;
@@ -240,7 +245,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				if (isES5Primitive(objectra.content) && (typeConstructorParams === 1 || useForceArgumentPassthrough)) {
 					const instance = constructType(objectra.content);
 					if (objectra.isDeclaration) {
-						resolvedReferenceMap.set(objectra, instance);
+						addResolvedReference(objectra, instance);
 					}
 
 					return instance;
@@ -259,7 +264,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 
 				if (transformator.useSerializationSymbolIterator) {
 					const instance = constructType();
-					resolvedReferenceMap.set(objectra, instance);
+					addResolvedReference(objectra, instance);
 					const value = instantiationTransformator.instantiate!(createInstantiationBridge(transformator)) as any[];
 					iterableInstanceContents.set(instance, value);
 					return instance;
@@ -268,14 +273,13 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				if (transformator['argumentPassthroughPropertyKeys'].length > 0) {
 					const instantiationOptions = createInstantiationBridge(transformator);
 					const value = instantiationTransformator.instantiate!(instantiationOptions);
-					injectInstanceUnfilledReferences(value);
 
 					const propKeys = transformator['argumentPassthroughPropertyKeys'];
 					const args = propKeys.map(key => value[key]);
 					
 					const instance = constructType(...args);
 					if (objectra.isDeclaration) {
-						resolvedReferenceMap.set(objectra, instance);
+						addResolvedReference(objectra, instance);
 					}
 
 					// TODO Use transformator whitelist
@@ -287,6 +291,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 						instance[key] = value[key];
 					}
 
+					injectInstanceUnfilledReferences(instance);
 					return instance;
 				}
 
@@ -295,7 +300,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 
 					const instance = constructType(value);
 					if (objectra.isDeclaration) {
-						resolvedReferenceMap.set(objectra, instance);
+						addResolvedReference(objectra, instance);
 					}
 
 					return instance;
@@ -304,7 +309,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				if (typeConstructorParams === 0) {
 					const instance = new transformator.type();
 					if (objectra.isDeclaration) {
-						resolvedReferenceMap.set(objectra, instance);
+						addResolvedReference(objectra, instance);
 					}
 
 					instantiationTransformator.instantiate!({
@@ -357,16 +362,20 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 					return resolvedInstance;
 				}
 			}
+
+			throw null;
 		}
 
 		function injectInstanceUnfilledReferences(instance: any) {
 			for (const [objectra, appearancePath] of awaitingReferenceObjectraMap) {
-				const awaitingReferenceInstance = getResolvedInstance(objectra);
-				if (!awaitingReferenceInstance) {
+				let resolution: Objectra.Reference;
+				try {
+					resolution = getResolvedInstance(objectra);
+				} catch {
 					continue;
 				}
 
-				const fullRelativePath = appearancePath.slice(keyPath.length);
+				const fullRelativePath = [...appearancePath].slice(keyPath.length);
 
 				let drilledObject = instance;
 				for (let i = 0; i < fullRelativePath.length; i++) {
@@ -391,7 +400,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 					// Write the reference to an endpoint
 					const keyIsLast = key === fullRelativePath.at(-1);
 					if (keyIsLast) {
-						drilledObject = drilledObject[key];
+						drilledObject[key] = resolution;
 						break;
 					}
 
@@ -542,17 +551,9 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			}
 
 			const instanceIsReference = Objectra.isValueReference(objectInstance);
-			const referenceIsOrigin = 
-				instanceIsReference
-				&& repeatingReferences.has(objectInstance)
-				&& !referableReferences.has(objectInstance);
-
+			const referenceIsOrigin = instanceIsReference && repeatingReferences.has(objectInstance) && !referableReferences.has(objectInstance);
 			const referenceIsClassConstructor = typeof objectInstance === 'function' && FunctionTypeDeterminant.isConstructor(objectInstance);
-
-			const referenceShouldInstantiate =
-				typeof objectInstance === 'function' && FunctionTypeDeterminant.isConstructor(objectInstance)
-				? false
-				: referenceIsOrigin;
+			const referenceShouldInstantiate = referenceIsClassConstructor ? false : referenceIsOrigin;
 
 			if (!referenceShouldInstantiate && repeatingReferences.has(objectInstance) && referableReferences.has(objectInstance)) {
 				const id = referenceIdentifiers.get(objectInstance);
@@ -687,6 +688,14 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 
 	public static duplicate<T>(value: T) {
 		return Objectra.from(value).compose();
+	}
+
+	public static toModel<T>(value: T): Objectra.Model {
+		return Objectra.from(value).toModel();
+	}
+
+	public static composeFromModel(model: Objectra.Model | string) {
+		return Objectra.fromModel(model).compose();
 	}
 
 	private static isIterableEntity(target: unknown): target is IterableEntity {

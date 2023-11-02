@@ -6,10 +6,10 @@ class InclusionEntity {
   @Transformator.Exclude()
   readonly seed: number;
 
-  @Transformator.TransforamationException() // Property is excluded
+  @Transformator.InvertFromMapping() // Property is excluded
   readonly internalId: number;
 
-  @Transformator.ArgumentPassthrough(0) // Property is excluded by default
+  @Transformator.ConstructorArgument(0) // Property is excluded by default
   readonly name: string;
 
   public location?: string;

@@ -119,8 +119,8 @@ export class ForeignBackloopReferenceError extends TransformatorError {
 }
 
 export class ArgumentPassthroughIndexAlreadyExistsError extends TransformatorError {
-  constructor(identifier: Objectra.Identifier, index: number) {
-    const typeName = Transformator.typeToString(identifier);
+  constructor(identifier: Objectra.Identifier | undefined, index: number) {
+    const typeName = identifier ? Transformator.typeToString(identifier) : '(ts5 unknown identifier)';
     super(`Can not set more than 1 passthrough argument at the index ${index} in the ${typeName} transformator`, {
       solution: `Make sure that you do not repeat the indexes on the passthrough arguments`,
     });
@@ -128,10 +128,10 @@ export class ArgumentPassthroughIndexAlreadyExistsError extends TransformatorErr
 }
 
 export class ArgumentPassthroughIncompatiblanceError extends TransformatorError {
-  constructor(identifier: Objectra.Identifier) {
-    const typeName = Transformator.typeToString(identifier);
-    super(`Can not set argument passthrough property key(s) when the global argument passthrough is enabled in the ${typeName} transformator`, {
-      solution: `Disable the global argument passthrough option on the transformator`,
+  constructor(identifier?: Objectra.Identifier) {
+    const typeName = identifier ? Transformator.typeToString(identifier) : '(ts5 unknown identifier)';
+    super(`Can not set argument passthrough property key(s) when the argument passthrough is enabled in the ${typeName} transformator`, {
+      solution: `Disable the argument passthrough option on the transformator`,
     });
   }
 }

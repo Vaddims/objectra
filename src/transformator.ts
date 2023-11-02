@@ -51,8 +51,6 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
   public static readonly staticRegistrations: Transformator[] = [];
   // Use weak map to prevent memory leak in cases when objectra serializes scoped funcitons
   public static readonly dynamicRegistrations = new WeakMap<Constructor | Function, Transformator>();
-  // Used commonly for decorator registrations their configs
-  private static readonly registrationCallbackQueueMap: Transformator.RegistrationCallbackQueueMap = new Map();
 
   private constructor(options: Transformator.InitOptions<IdentifierType, InstanceType, SerializationType>) {
     this.type = options.type;
@@ -362,10 +360,6 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
       type: options.type,
     });
 
-    if (typeConstructor.name === 'InclusionEntityChild') {
-      console.log(transformator);
-    }
-
     return transformator;
   }
 
@@ -396,15 +390,16 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
   // #endregion
 
   // #region Decorators
+
+  private static readonly awaitingRegistrationFieldResolvers: Transformator.RegistrationCallbackQueueSet = new Set();
   public static Register<T = unknown, S = any, K extends Constructor = T extends Constructor ? T : Constructor<T>>(options: Transformator.ConfigOptions<IdentifierInstance<K>, S> = {}) {
-    return (constructor: K) => {
+    return (constructor: K, context: ClassDecoratorContext): void => {
       if (Transformator.exists(constructor)) {
         throw new TransformatorAlreadyRegisteredError(constructor);
       }
 
-      const callbackQueue = Transformator.registrationCallbackQueueMap.get(constructor) ?? [];
-
-      Transformator.registrationCallbackQueueMap.delete(constructor);
+      const callbackQueue = [...this.awaitingRegistrationFieldResolvers];
+      Transformator.awaitingRegistrationFieldResolvers.clear();
       
       for (const resolve of callbackQueue) {
         const resolvedConfigOptions = resolve({ ...options });
@@ -421,10 +416,6 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
     }
   }
 
-  public static TransforamationException() {
-    return Transformator.conditionalTransformationException();
-  }
-
   public static Include() {
     return Transformator.conditionalTransformationException(Transformator.PropertyTransformationMapping.Inclusion);
   }
@@ -433,70 +424,61 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
     return Transformator.conditionalTransformationException(Transformator.PropertyTransformationMapping.Exclusion);
   }
 
-  public static ArgumentPassthrough<T extends object>(argumentIndex?: number) {
-    return (target: T, propertyKey: string) => {
+  public static InvertFromMapping() {
+    return Transformator.conditionalTransformationException();
+  }
+
+  private static conditionalTransformationException(targetMapping?: Transformator.PropertyTransformationMapping) {
+    return function<C, V>(_: undefined, context: ClassFieldDecoratorContext<C, V>) {
+      const propertyKey = context.name.toString() // TODO add symbols
+
+      const resolver = (transformatorOptions: Transformator.ConfigOptions<any, any>) => {
+        const defaultPropertyTransformationMapping = Transformator.PropertyTransformationMapping.Inclusion;
+
+        const newTransformatorOptions = {
+          propertyTransformationMask: [...transformatorOptions.propertyTransformationMask ?? []],
+          propertyTransformationMapping: transformatorOptions.propertyTransformationMapping ?? defaultPropertyTransformationMapping,
+        };
+
+        if (targetMapping && targetMapping === newTransformatorOptions.propertyTransformationMapping) {
+          return newTransformatorOptions;
+        }
+
+        newTransformatorOptions.propertyTransformationMask.push(propertyKey);
+        return newTransformatorOptions;
+      }
+
+      Transformator.awaitingRegistrationFieldResolvers.add(resolver);
+    }
+  }
+
+  public static ConstructorArgument(argumentIndex?: number) {
+    return function<T, V>(_: undefined, context: ClassFieldDecoratorContext<T, V>) {
+      const propertyKey = context.name.toString() // todo add symbols
+
       const resolver = (options: Transformator.ConfigOptions<any, any>) => {
         if (options.argumentPassthrough) {
-          throw new ArgumentPassthroughIncompatiblanceError(target as Objectra.Identifier);
+          throw new ArgumentPassthroughIncompatiblanceError();
         }
         
         const customOptions = {
           argumentPassthroughPropertyKeys: Array.from(options.argumentPassthroughPropertyKeys ?? [])
         } as const;
 
-        if (!argumentIndex) {
+        if (typeof argumentIndex === 'undefined') {
           customOptions.argumentPassthroughPropertyKeys.push(propertyKey);
           return customOptions;
         }
 
         if (customOptions.argumentPassthroughPropertyKeys[argumentIndex]) {
-          throw new ArgumentPassthroughIndexAlreadyExistsError(target as Objectra.Identifier, argumentIndex);
+          throw new ArgumentPassthroughIndexAlreadyExistsError(undefined, argumentIndex);
         }
 
         customOptions.argumentPassthroughPropertyKeys[argumentIndex] = propertyKey;
         return customOptions;
       }
 
-      Transformator.addRegistrationCallbackResolver(target.constructor, resolver);
-    }
-  }
-  // #endregion
-
-  // #region Decorator helpers
-  private static addRegistrationCallbackResolver(identifier: Objectra.Identifier, callback: Transformator.RegistrationCallback) {
-    const registrationCallbackQueue = Transformator.registrationCallbackQueueMap.get(identifier);
-    if (!registrationCallbackQueue) {
-      Transformator.registrationCallbackQueueMap.set(identifier, [callback]);
-      return;
-    }
-
-    registrationCallbackQueue.push(callback);
-  }
-
-  private static conditionalTransformationException<T extends object>(targetMapping?: Transformator.PropertyTransformationMapping) {
-    return (target: T, propertyKey: string) => {
-      const resolver = (transformatorOptions: Transformator.ConfigOptions<any, any>) => {
-        const newTransformatorOptions = {
-          propertyTransformationMask: Array.from(transformatorOptions.propertyTransformationMask ?? []),
-          propertyTransformationMapping: transformatorOptions.propertyTransformationMapping ?? Transformator.PropertyTransformationMapping.Inclusion,
-        };
-        
-        targetMapping ??= (
-          newTransformatorOptions.propertyTransformationMapping === Transformator.PropertyTransformationMapping.Inclusion
-          ? Transformator.PropertyTransformationMapping.Exclusion
-          : Transformator.PropertyTransformationMapping.Inclusion
-        );
-
-        if (targetMapping === transformatorOptions.propertyTransformationMapping) {
-          return newTransformatorOptions;
-        }
-
-        newTransformatorOptions.propertyTransformationMask.push(propertyKey);
-
-        return newTransformatorOptions;
-      }
-      
-      Transformator.addRegistrationCallbackResolver(target.constructor, resolver);
+      Transformator.awaitingRegistrationFieldResolvers.add(resolver);
     }
   }
   // #endregion
@@ -597,7 +579,7 @@ export namespace Transformator {
     Exclusion = 'exclusion',
   }
 
-  export type RegistrationCallbackQueueMap = Map<Objectra.Identifier, RegistrationCallback[]>;
+  export type RegistrationCallbackQueueSet = Set<RegistrationCallback>;
   export interface RegistrationCallback<V = any, S = any> {
     (options: ConfigOptions<V, S>): Writeable<ConfigOptions<V, S>>;
   }
