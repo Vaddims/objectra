@@ -1,13 +1,13 @@
 import { Objectra } from "../src";
 import { Transformator } from "../src/transformator";
 
-@Transformator.Register<InclusionEntity>()
+@Transformator.Register()
 class InclusionEntity {
   @Transformator.Exclude()
-  readonly seed: number;
+  readonly seed = Math.random();
 
   @Transformator.InvertFromMapping() // Property is excluded
-  readonly internalId: number;
+  readonly internalId = Math.random();
 
   @Transformator.ConstructorArgument(0) // Property is excluded by default
   readonly name: string;
@@ -16,16 +16,14 @@ class InclusionEntity {
   public age?: number;
   
   constructor(name: string) {
-    this.seed = Math.random();
-    this.internalId = Math.random();
     this.name = name;
   }
 }
 
-@Transformator.Register<InclusionEntityChild>()
+@Transformator.Register()
 class InclusionEntityChild extends InclusionEntity {
   @Transformator.Include()
-  readonly seed!: number;
+  override readonly seed = Math.random();
 }
 
 describe(`test class decorators`, () => {
@@ -46,20 +44,20 @@ describe(`test class decorators`, () => {
     expect(entityDuplicate.internalId).not.toBe(entity.internalId);
   });
 
-  // test('With inherited object inclusion mapping', () => {
-  //   const entity = new InclusionEntityChild('C5P');
-  //   entity.location = 'Pluto';
-  //   entity.age = 142;
+  test('With inherited object inclusion mapping', () => {
+    const entity = new InclusionEntityChild('C5P');
+    entity.location = 'Pluto';
+    entity.age = 142;
     
-  //   const entityDuplicate = Objectra.duplicate(entity);
+    const entityDuplicate = Objectra.duplicate(entity);
 
-  //   expect(entityDuplicate).not.toBe(entity);
+    expect(entityDuplicate).not.toBe(entity);
 
-  //   expect(entityDuplicate.name).toBe(entity.name);
-  //   expect(entityDuplicate.age).toBe(entity.age);
-  //   expect(entityDuplicate.location).toBe(entity.location);
+    expect(entityDuplicate.name).toBe(entity.name);
+    expect(entityDuplicate.age).toBe(entity.age);
+    expect(entityDuplicate.location).toBe(entity.location);
 
-  //   expect(entityDuplicate.seed).toBe(entity.seed);
-  //   expect(entityDuplicate.internalId).not.toBe(entity.internalId);
-  // });
+    expect(entityDuplicate.seed).toBe(entity.seed);
+    expect(entityDuplicate.internalId).not.toBe(entity.internalId);
+  });
 });

@@ -81,7 +81,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 	}
 
 	public get isConsumer() {
-		return typeof this.id === 'number' && !('content' in this);
+		return typeof this.id === 'number' && typeof this.content === 'undefined';
 	}
 
 	public get childObjectras() {
@@ -368,6 +368,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 
 		function injectInstanceUnfilledReferences(instance: any) {
 			for (const [objectra, appearancePath] of awaitingReferenceObjectraMap) {
+				console.log(appearancePath);
 				let resolution: Objectra.Reference;
 				try {
 					resolution = getResolvedInstance(objectra);

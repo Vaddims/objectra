@@ -10,7 +10,7 @@ import {
   SelfInstantiationError, 
   SelfSerializationError, 
   SerializationMethodDoesNotExistError, 
-  TransformatorAlreadyRegisteredError, 
+  TransformatorAlreadyRegisteredError,
   TransformatorAlreadyConfiguredError, 
   TransformatorNotFoundError, 
   ArgumentPassthroughIncompatiblanceError
@@ -20,6 +20,8 @@ type IdentifierInstance<RegistrationIdentifier> = RegistrationIdentifier extends
   ? InstanceType<RegistrationIdentifier> 
   : RegistrationIdentifier;
 
+// TODO Rename (inst/seri) Bridge to (inst/seri) Context / Make context class
+
 export class Transformator<IdentifierType extends Objectra.Identifier = Objectra.Identifier, InstanceType = any, SerializationType = any> {
   // Identifiers
   public readonly type: IdentifierType;
@@ -27,13 +29,13 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
   public readonly overload: number | undefined;
   
   // Argument grouping
+  // TODO Merge argumentPassthrough with argumentPassthroughPropertyKeys (as null or array)
   public readonly argumentPassthrough: boolean;
   public readonly ignoreDefaultArgumentBehaviour: boolean;
   public readonly argumentPassthroughPropertyKeys: readonly string[]; // Not combinable with global argumentPassthrough
   
   // Property seperation
-  public readonly propertyTransformationMask: readonly string[];
-  public readonly propertyTransformationMapping: Transformator.PropertyTransformationMapping;
+  public readonly propertyExclusionMask: readonly string[];
   
   // Branching
   public readonly useSerializationSymbolIterator: boolean;
@@ -47,7 +49,6 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
   public readonly getter: NonNullable<Transformator.Transformers<InstanceType, SerializationType>['getter']>;
   public readonly setter: NonNullable<Transformator.Transformers<InstanceType, SerializationType>['setter']>;
 
-  // * Static Properties
   public static readonly staticRegistrations: Transformator[] = [];
   // Use weak map to prevent memory leak in cases when objectra serializes scoped funcitons
   public static readonly dynamicRegistrations = new WeakMap<Constructor | Function, Transformator>();
@@ -61,8 +62,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
     this.ignoreDefaultArgumentBehaviour = options.ignoreDefaultArgumentBehaviour ?? false;
     this.argumentPassthroughPropertyKeys = Array.from(options.argumentPassthroughPropertyKeys ?? []);
     
-    this.propertyTransformationMask = options.propertyTransformationMask ?? [];
-    this.propertyTransformationMapping = options.propertyTransformationMapping ?? Transformator.PropertyTransformationMapping.Inclusion;
+    this.propertyExclusionMask = options.propertyExclusionMask ?? [];
 
     this.useSerializationSymbolIterator = options.useSerializationSymbolIterator ?? false;
     this.symbolIteratorEntryDepth = options.symbolIteratorEntryDepth ?? 1;
@@ -195,20 +195,15 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
       argumentPassthrough: this.argumentPassthrough,
       ignoreDefaultArgumentBehaviour: this.ignoreDefaultArgumentBehaviour,
       argumentPassthroughPropertyKeys: Array.from(this.argumentPassthroughPropertyKeys),
-      propertyTransformationMask: Array.from(this.propertyTransformationMask),
-      propertyTransformationMapping: this.propertyTransformationMapping,
+      propertyExclusionMask: Array.from(this.propertyExclusionMask),
       useSerializationSymbolIterator: this.useSerializationSymbolIterator,
     }
   }
 
   public getMaskedObjectPropertyNames(instance: InstanceType) {
-    if (this.propertyTransformationMapping === Transformator.PropertyTransformationMapping.Inclusion) {
-      return Object.getOwnPropertyNames(instance).filter(
-        (key) => !this.propertyTransformationMask.includes(key)
-      );
-    }
-
-    return [...this.propertyTransformationMask];
+    return Object.getOwnPropertyNames(instance).filter(
+      (key) => !this.propertyExclusionMask.includes(key)
+    );
   }
 
   private static splitConfigOptions<V, S>(options: Transformator.ConfigOptions<V, S>): Transformator.ConfigOptionsSplitted<V, S> {
@@ -350,7 +345,6 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
     const parentSpecifications = parentTransformator?.getSpecificationOptions();
     const specifications = options.specifications ?? {};
 
-    // TODO Handle if sub class whants to include a property which is excluded from the parent
     const transformator = new Transformator({
       ...parentSpecifications,
       ...specifications,
@@ -400,6 +394,9 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
 
       const callbackQueue = [...this.awaitingRegistrationFieldResolvers];
       Transformator.awaitingRegistrationFieldResolvers.clear();
+
+      const parentOptions = Transformator.getParentTransformator(constructor)?.getSpecificationOptions() ?? {};
+      options = Object.assign(parentOptions, options);
       
       for (const resolve of callbackQueue) {
         const resolvedConfigOptions = resolve({ ...options });
@@ -433,18 +430,27 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
       const propertyKey = context.name.toString() // TODO add symbols
 
       const resolver = (transformatorOptions: Transformator.ConfigOptions<any, any>) => {
-        const defaultPropertyTransformationMapping = Transformator.PropertyTransformationMapping.Inclusion;
+        const newTransformatorOptions: Writeable<Transformator.ConfigOptions<any, any>> = {};
 
-        const newTransformatorOptions = {
-          propertyTransformationMask: [...transformatorOptions.propertyTransformationMask ?? []],
-          propertyTransformationMapping: transformatorOptions.propertyTransformationMapping ?? defaultPropertyTransformationMapping,
-        };
+        const parentPropertyExclusionMask = transformatorOptions.propertyExclusionMask ?? [];
+        const newPropertyExclusionMask = [...parentPropertyExclusionMask];
 
-        if (targetMapping && targetMapping === newTransformatorOptions.propertyTransformationMapping) {
-          return newTransformatorOptions;
+        const propertyKeyMaskIndex = newPropertyExclusionMask.indexOf(propertyKey);
+        
+        const isInvertion = !targetMapping;
+        const isInclusion = targetMapping === Transformator.PropertyTransformationMapping.Inclusion;
+        const isExclusion = targetMapping === Transformator.PropertyTransformationMapping.Exclusion;
+    
+        if (propertyKeyMaskIndex === -1 && (isExclusion || isInvertion)) {
+          newPropertyExclusionMask.push(propertyKey);
+        } else if (propertyKeyMaskIndex >= 0 && (isInclusion || isInvertion)) {
+          newPropertyExclusionMask.splice(propertyKeyMaskIndex, 1);
         }
 
-        newTransformatorOptions.propertyTransformationMask.push(propertyKey);
+        if (newPropertyExclusionMask.length !== parentPropertyExclusionMask.length) {
+          newTransformatorOptions.propertyExclusionMask = [...newPropertyExclusionMask];
+        }
+
         return newTransformatorOptions;
       }
 
@@ -544,8 +550,7 @@ export namespace Transformator {
     readonly argumentPassthrough?: boolean;
     readonly argumentPassthroughPropertyKeys?: string[];
     readonly ignoreDefaultArgumentBehaviour?: boolean;
-    readonly propertyTransformationMask?: string[];
-    readonly propertyTransformationMapping?: Transformator.PropertyTransformationMapping;
+    readonly propertyExclusionMask?: string[];
     readonly useSerializationSymbolIterator?: boolean;
     readonly symbolIteratorEntryDepth?: number;
   }
