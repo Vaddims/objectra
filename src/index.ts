@@ -176,30 +176,42 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		const keyPath: string[] = [];
 
 		const addResolvedReference = (objectra: Objectra, reference: Objectra.Reference) => {
+			if (typeof objectra.id !== 'number') {
+				return resolvedReferenceMap;
+			}
+			
 			resolvedReferenceMap.set(objectra, reference);
+			injectInstanceUnfilledReferences(reference);
 			return resolvedReferenceMap;
 		}
 
 		const objectraValueInstantiation: Objectra.ValueInstantiation = (objectra) => {
-			// Block circular instantiation
 			if (objectra.isConsumer) {
+				// ! Objectra must be injected from its definition
+				// Definition -> The main reference used for all the required reference injections
+
 				try {
+					// Apply the reference definition if it is already resolved
 					const resolvedInstance = getResolvedInstance(objectra);
 					return resolvedInstance;
 				} catch {}
 
 				const target = hoistingMap.get(objectra.id!);
-				if (!target) {
-					awaitingReferenceObjectraMap.set(objectra, [...keyPath]);
-					return new Objectra.ReferenceInjection();
+				if (target) {
+					// Proceed to instantiate the already explored (but not instantiated) definition
+					hoistingMap.delete(target.id!);
+					const instance = objectraValueInstantiation(target);
+					return instance;
 				}
 
-				hoistingMap.delete(target.id!);
-				const instance = objectraValueInstantiation(target);
-				return instance;
+				// Definition has been not explored yet (Inject temporary placeholder)
+				awaitingReferenceObjectraMap.set(objectra, [...keyPath]);
+				return new Objectra.ReferenceInjection();
 			}
 
 			if (typeof objectra.identifier === 'string') {
+				// ! Next code will not be executed. From model already covers the current functionality.
+				// TODO Add instantiation from nammed identifiers
 				const transformator = Transformator.getStatic(objectra.identifier);
 				if (!transformator.instantiate) {
 					throw new InstantiationMethodDoesNotExistError(objectra.identifier);
@@ -207,125 +219,145 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 
 				return transformator.instantiate(createInstantiationBridge(transformator));
 			}
+
+			if (typeof objectra.identifier === 'undefined') {
+				// ! Cover edge cases (Only undefined and null are treated in this special form)
+				if (objectra.content === null) {
+					return null;
+				}
+	
+				return undefined;
+			}
 			
-			if (typeof objectra.identifier !== 'undefined') {
-				if (!objectra.identifierIsConstructor) {
-					// TODO RWORK WITH IDS
-					return objectra.identifier;
+			if (!objectra.identifierIsConstructor) {
+				// TODO Resee what happens here. Class definition edge case?
+				return objectra.identifier;
+			}
+
+			const transformator = Transformator.get(objectra.identifier, objectra.overload);
+			const constructType = typeConstructorGenerator(transformator);
+			const typeConstructorParams = transformator.type.length;
+
+			objectra.hoistingReferences.forEach((objectra) => {
+				if (typeof objectra.id === 'undefined') {
+					// TODO Resee
+					return;
 				}
 
-				const transformator = Transformator.get(objectra.identifier, objectra.overload);
-				const constructType = typeConstructorGenerator(transformator);
-				const typeConstructorParams = transformator.type.length;
-
-				objectra.hoistingReferences.forEach((objectra) => hoistingMap.set(objectra.id!, objectra));
-				
-				if (transformator && transformator.instantiate) {
-					if (objectra.isDeclaration) {
-						const instance = constructType();
-						if (objectra.isDeclaration) {
-							addResolvedReference(objectra, instance);
-						}
-
-						return transformator.instantiate({
-							...createInstantiationBridge(transformator),
-							instance,
-						});
-					}
-
-					const instance = transformator.instantiate(createInstantiationBridge(transformator));
-					if (objectra.isDeclaration) {
-						addResolvedReference(objectra, instance);
-					}
-
-					return instance;
-				}
-
-				const useForceArgumentPassthrough = transformator.ignoreDefaultArgumentBehaviour && transformator.argumentPassthrough;
-				if (isES5Primitive(objectra.content) && (typeConstructorParams === 1 || useForceArgumentPassthrough)) {
-					const instance = constructType(objectra.content);
-					if (objectra.isDeclaration) {
-						addResolvedReference(objectra, instance);
-					}
-
-					return instance;
-				}
-
-				// TODO Overhaul
-				if (!FunctionTypeDeterminant.isConstructor(transformator.type)) {
-					throw new Error(`Can not get superclasses of function`);
-				}
-				
-				const superTransformators = Transformator.getSuperTransformators(transformator.type);
-				const instantiationTransformator = Array.from(superTransformators).find(transformator => transformator.instantiate);
-				if (!instantiationTransformator) {
-					throw new InvalidInstantiationArgumentQuantityError(objectra.identifier);
-				}
-
-				if (transformator.useSerializationSymbolIterator) {
+				hoistingMap.set(objectra.id!, objectra)
+			});
+			
+			if (transformator && transformator.instantiate) {
+				// ! Custom instantiations
+				if (objectra.isDeclaration) {
 					const instance = constructType();
-					addResolvedReference(objectra, instance);
-					const value = instantiationTransformator.instantiate!(createInstantiationBridge(transformator)) as any[];
-					iterableInstanceContents.set(instance, value);
-					return instance;
-				}
 
-				if (transformator['argumentPassthroughPropertyKeys'].length > 0) {
-					const instantiationOptions = createInstantiationBridge(transformator);
-					const value = instantiationTransformator.instantiate!(instantiationOptions);
-
-					const propKeys = transformator['argumentPassthroughPropertyKeys'];
-					const args = propKeys.map(key => value[key]);
-					
-					const instance = constructType(...args);
-					if (objectra.isDeclaration) {
-						addResolvedReference(objectra, instance);
-					}
-
-					// TODO Use transformator whitelist
-					const unusedKeys = Object.keys(value).filter(key => 
-						!transformator['argumentPassthroughPropertyKeys'].includes(key)
-					);
-
-					for (const key of unusedKeys) {
-						instance[key] = value[key];
-					}
-
-					injectInstanceUnfilledReferences(instance);
-					return instance;
-				}
-
-				if (transformator.argumentPassthrough && (transformator.ignoreDefaultArgumentBehaviour || typeConstructorParams === 1)) {
-					const value = instantiationTransformator.instantiate!(createInstantiationBridge(transformator));
-
-					const instance = constructType(value);
-					if (objectra.isDeclaration) {
-						addResolvedReference(objectra, instance);
-					}
-
-					return instance;
-				}
-
-				if (typeConstructorParams === 0) {
-					const instance = new transformator.type();
-					if (objectra.isDeclaration) {
-						addResolvedReference(objectra, instance);
-					}
-
-					instantiationTransformator.instantiate!({
+					const returnInstance = transformator.instantiate({
 						...createInstantiationBridge(transformator),
 						instance,
 					});
 
-					return instance;
+					// TODO Resee
+					addResolvedReference(objectra, returnInstance);
+
+					return returnInstance;
 				}
+
+				const instance = transformator.instantiate(createInstantiationBridge(transformator));
+				return instance;
 			}
 
-			if (objectra.content === null) {
-				return null;
+			const useForceArgumentPassthrough = transformator.ignoreDefaultArgumentBehaviour && transformator.argumentPassthrough;
+			if (isES5Primitive(objectra.content) && (typeConstructorParams === 1 || useForceArgumentPassthrough)) {
+				// ! Bundle all properties to one constructor argument object (Ignore all argument rules)
+				const instance = constructType(objectra.content);
+				if (objectra.isDeclaration) {
+					addResolvedReference(objectra, instance);
+				}
+
+				return instance;
 			}
 
-			return undefined;
+			if (!FunctionTypeDeterminant.isConstructor(transformator.type)) {
+				// ! Transformator type is not a constructor [but function] (Edge case)
+				// TODO Resee
+				throw new Error(`Can not get superclasses of function`);
+			}
+			
+			// ! Search to the nearest transformator with a defined instantiation function
+			const superTransformators = Transformator.getSuperTransformators(transformator.type);
+			const instantiationTransformator = Array.from(superTransformators).find(transformator => transformator.instantiate);
+			if (!instantiationTransformator) {
+				// TODO define class error
+				throw 'Ancestor with instantiation method not found';
+				// throw new InvalidInstantiationArgumentQuantityError(objectra.identifier);
+			}
+
+			if (transformator.useSerializationSymbolIterator) {
+				// ! Symbol iterator strucure
+				// TODO Add flags (argumentPassthrough) for better instantiation
+				const instance = constructType();
+				addResolvedReference(objectra, instance);
+				const returnInstance = instantiationTransformator.instantiate!(createInstantiationBridge(transformator)) as any[];
+				iterableInstanceContents.set(instance, returnInstance);
+				return instance;
+			}
+
+			if (transformator['argumentPassthroughPropertyKeys'].length > 0) {
+				// ! Resolve constructor with prewritten properties
+				const instantiationOptions = createInstantiationBridge(transformator);
+				const value = instantiationTransformator.instantiate!(instantiationOptions);
+
+				const propKeys = transformator['argumentPassthroughPropertyKeys'];
+				const args = propKeys.map(key => value[key]);
+				
+				const instance = constructType(...args);
+				if (objectra.isDeclaration) {
+					addResolvedReference(objectra, instance);
+				}
+
+				const unusedKeys = Object.keys(value).filter(key => 
+					!transformator['argumentPassthroughPropertyKeys'].includes(key)
+				);
+
+				for (const key of unusedKeys) {
+					instance[key] = value[key];
+				}
+
+				injectInstanceUnfilledReferences(instance);
+				return instance;
+			}
+
+			if (transformator.argumentPassthrough && (transformator.ignoreDefaultArgumentBehaviour || typeConstructorParams === 1)) {
+				// ! Bundle all properties to one constructor argument object
+				// TODO Mark under experimental flag or remove
+				const value = instantiationTransformator.instantiate!(createInstantiationBridge(transformator));
+
+				const instance = constructType(value);
+				if (objectra.isDeclaration) {
+					addResolvedReference(objectra, instance);
+				}
+
+				return instance;
+			}
+
+			if (typeConstructorParams === 0) {
+				// ! Pure constructor call
+				const instance = new transformator.type();
+				if (objectra.isDeclaration) {
+					addResolvedReference(objectra, instance);
+				}
+
+				instantiationTransformator.instantiate!({
+					...createInstantiationBridge(transformator),
+					instance,
+				});
+
+				return instance;
+			}
+
+			// TODO Resee edge cases
+			throw `Unexpected error while instantiating. Possible problems (Did not register ${objectra.identifier.name} class)`
 
 			function createInstantiationBridge(transformator: Transformator): Transformator.InstantiationBridge<any, any> {
 				return {
@@ -368,7 +400,6 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 
 		function injectInstanceUnfilledReferences(instance: any) {
 			for (const [objectra, appearancePath] of awaitingReferenceObjectraMap) {
-				console.log(appearancePath);
 				let resolution: Objectra.Reference;
 				try {
 					resolution = getResolvedInstance(objectra);
@@ -402,19 +433,21 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 					const keyIsLast = key === fullRelativePath.at(-1);
 					if (keyIsLast) {
 						drilledObject[key] = resolution;
+						awaitingReferenceObjectraMap.delete(objectra);
 						break;
 					}
 
-					// Drill the object
 					if (transformator.useSerializationSymbolIterator) {
 						const entries = iterableInstanceContents.get(drilledObject);
 						if (!entries) {
-							throw Error('No entries');
+							return;
 						}
+
 						drilledObject = entries[Number(key)];
-					} else {
-						drilledObject = drilledObject[key];
+						continue;
 					}
+					
+					drilledObject = drilledObject[key];
 				}
 			}
 
