@@ -1,16 +1,10 @@
 import type { Objectra } from ".";
 import { Constructor } from "./types/util.types";
 
-export interface ObjectraDescriptor {
-  readonly path: string[];
-}
-
-export type ObjectraDescriptorTuple = readonly [Objectra, ObjectraDescriptor]
-
 export class ObjectraCluster {
-  private readonly objectraDescriptorMap: Map<Objectra, ObjectraDescriptor>;
+  private readonly objectraDescriptorMap: Map<Objectra, ObjectraCluster.Entry.Descriptor>;
 
-  constructor(iterable?: Iterable<ObjectraDescriptorTuple>) {
+  constructor(iterable?: Iterable<ObjectraCluster.Entry>) {
     if (!iterable) {
       this.objectraDescriptorMap = new Map();
       return;
@@ -23,7 +17,7 @@ export class ObjectraCluster {
     return this.objectraDescriptorMap.size;
   }
 
-  public add(objectra: Objectra, descriptor: ObjectraDescriptor) {
+  public add(objectra: Objectra, descriptor: ObjectraCluster.Entry.Descriptor) {
     return this.objectraDescriptorMap.set(objectra, descriptor);
   }
 
@@ -55,23 +49,27 @@ export class ObjectraCluster {
     return this.filter(objectra => objectra.isDeclaration);
   }
 
+  public referenceDeclarations() {
+    return this.filter(objectra => objectra.isReferenceDeclaration);
+  }
+
   public referenceConsumers() {
-    return this.filter(objectra => objectra.isConsumer)
+    return this.filter(objectra => objectra.isReferenceConsumer);
   }
 
   public instancesOf(constructor: Constructor) {
-    return this.filter(objectra => objectra.contentIsInstanceOf(constructor))
+    return this.filter(objectra => objectra.contentIsInstanceOf(constructor));
   }
 
   public constructorTyped() {
-    return this.filter(objectra => objectra.identifierIsConstructor)
+    return this.filter(objectra => objectra.identifierIsConstructor);
   }
 
   public primitiveValue(primitive: string | number | boolean) {
     return this.filter(objectra => objectra['content'] === primitive);
   }
 
-  private filter(filter: (objectra: Objectra, descriptor: ObjectraDescriptor) => boolean) {
+  private filter(filter: (objectra: Objectra, descriptor: ObjectraCluster.Entry.Descriptor) => boolean) {
     for (const [ objectra, descriptor ] of this.objectraDescriptorMap) {
       if (!filter(objectra, descriptor)) {
         this.objectraDescriptorMap.delete(objectra);
@@ -79,5 +77,14 @@ export class ObjectraCluster {
     }
 
     return this;
+  }
+}
+
+export namespace ObjectraCluster {
+  export type Entry = readonly [Objectra, Entry.Descriptor];
+  export namespace Entry {
+    export interface Descriptor {
+      readonly path: string[];
+    }
   }
 }
