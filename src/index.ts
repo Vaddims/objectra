@@ -80,23 +80,27 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		return typeof this.identifier !== 'undefined';
 	}
 
+	/** Indicates if the Objectra holds an instance reference (object by reference) which was found more than one time in the initial value */
 	public get isReference() {
 		return typeof this.id === 'number';
 	}
 
+	/** Indicates if the Objectra will instantiate itself on instantiation, and will inject its instance to the reference injection placeholders */
 	public get isReferenceDeclaration() {
 		return this.isReference && typeof this.content !== 'undefined';
 	}
 
-	/** Indicates if this Objectra will be handled as a placeholder for a reference injection */
+	/** Indicates if this Objectra will act as a reference injection placeholder on instantiation. It will not instantiate itself, but will wait for its definition to inject the reference to the placeholder */
 	public get isReferenceConsumer() {
 		return this.isReference && typeof this.content === 'undefined';
 	}
 
+	/** Indicates if the Objectra will instantiate itself on instantiation */
 	public get isDeclaration() {
 		return this.isIdentified && !this.isReferenceConsumer;
 	}
 
+	/** The children of the objectra content */
 	public get childObjectras() {
 		if (this.cachedChildObjectraCluster) {
 			return this.cachedChildObjectraCluster;
@@ -117,6 +121,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		return this.cachedChildObjectraCluster = new Objectra.Cluster(objectraEntries);
 	}
 
+	/** The children of the objectra tree */
 	public get descendantObjectras() {
 		if (this.cachedDescendantObjectraCluster) {
 			return this.cachedDescendantObjectraCluster;
@@ -159,6 +164,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		return new Objectra.Cluster(objectraClusterEntries);
 	}
 
+	/** Create an easy to use, */
 	public getContentReferenceBackloop() {
 		const duplex = this.createBackloopReferenceDuplex();
 		return duplex;
@@ -561,89 +567,92 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			Array.from(repeatingReferences).map((reference, index) => [reference, index])
 		);
 
-		const objectraValueSerialization: Objectra.ValueSerialization = <T>(instance: T) => {
-			if (typeof instance === 'undefined') {
+		const serializeValueWithinContext: Objectra.ValueSerialization = <T>(providedInstance: T) => {
+			if (typeof providedInstance === 'undefined') {
 				return new Objectra<Objectra.Content<T>>({ content: undefined });
 			}
 
-			if (instance === null) {
+			if (providedInstance === null) {
 				return new Objectra<Objectra.Content<T>>({ content: null as Objectra.Content<any> });
 			}
 
-			const objectInstance = instance as T & Objectra.Reference; // TODO Check for primitives
+			const instance = providedInstance as T & Objectra.Reference;
 			
-			if (typeof objectInstance.constructor !== 'function') {
+			if (typeof instance.constructor !== 'function') {
+				// TODO Create custom error
 				throw new Error(`Can not objectrafy an object inherited value without a constructor`);
 			}
 
-			const instanceIsReference = Objectra.isValueReference(objectInstance);
-			const referenceIsOrigin = instanceIsReference && repeatingReferences.has(objectInstance) && !referableReferences.has(objectInstance);
-			const referenceIsClassConstructor = typeof objectInstance === 'function' && FunctionTypeDeterminant.isConstructor(objectInstance);
-			const referenceShouldInstantiate = referenceIsClassConstructor ? false : referenceIsOrigin;
+			const instanceIsReference = Objectra.isValueReference(instance);
+			const instanceIsClassDefinition = typeof instance === 'function' && FunctionTypeDeterminant.isConstructor(instance);
+			const instanceIsReferenceDefinition = instanceIsReference && repeatingReferences.has(instance) && !referableReferences.has(instance);
+			const instanceShouldReinstantiateOnDefinition = instanceIsClassDefinition ? false : instanceIsReferenceDefinition;
 
-			if (!referenceShouldInstantiate && repeatingReferences.has(objectInstance) && referableReferences.has(objectInstance)) {
-				const id = referenceIdentifiers.get(objectInstance);
+			if (!instanceShouldReinstantiateOnDefinition && repeatingReferences.has(instance) && referableReferences.has(instance)) {
+				const id = referenceIdentifiers.get(instance);
 				if (typeof id === 'undefined') {
+					// TODO Create custom error
 					throw new Error('Internal id not found')
 				}
 
 				return new Objectra({ id });
 			}
 			
-			if (!referenceIsClassConstructor) {
-				referableReferences.add(objectInstance);
+			if (!instanceIsClassDefinition) {
+				// TODO Add id (bounce to compose method and handle them as full references)
+				referableReferences.add(instance);
 			}
 			
-			const instanceTransformator = Transformator.get(objectInstance.constructor as Constructor);
-			const superTransformators = Transformator.getSuperTransformators(objectInstance.constructor as Constructor);
+			const instanceConstrucor = instance.constructor as Constructor;
+			const instanceTransformator = Transformator.get(instanceConstrucor);
+			const superTransformators = Transformator.getSuperTransformators(instanceConstrucor);
 
 			const transformators: Transformator[] = [...superTransformators];
 			if (instanceTransformator) {
 				transformators.unshift(instanceTransformator);
 			}
 
-			const serializationSuperTransformator = Array.from(transformators).find(transformator => transformator.serialize);
-			if (!serializationSuperTransformator) {
-				throw new TransformatorMatchNotFoundError(objectInstance.constructor);
+			const highestSerializationTransformator = Array.from(transformators).find(transformator => transformator.serialize);
+			if (!highestSerializationTransformator) {
+				throw new TransformatorMatchNotFoundError(instance.constructor);
 			}
 
-			const instanceHoistingReferences = Array
+			const hoistingReferences = Array
 				.from(referenceHoistingParentMap)
-				.filter(([, parent]) => parent === objectInstance)
+				.filter(([, parent]) => parent === instance)
 				.map(([reference]) => reference);
 
-			
-			const instanceObjectraHoistings = instanceHoistingReferences.map(objectraValueSerialization);
+			const objectraHoistings = hoistingReferences.map(serializeValueWithinContext);
 
-			const id = referenceShouldInstantiate ? referenceIdentifiers.get(objectInstance) : void 0;
+			const id = instanceShouldReinstantiateOnDefinition ? referenceIdentifiers.get(instance) : void 0;
 			
-			if (typeof objectInstance === 'function') {
+			if (typeof instance === 'function') {
 				return new Objectra({
-					identifier: objectInstance,
-					isReferenceHoist: referenceShouldInstantiate,
+					identifier: instance,
+					isReferenceHoist: instanceShouldReinstantiateOnDefinition,
 					id,
 				});
 			} 
 
-			const objectraContent = serializationSuperTransformator.serialize!({
-				instance: objectInstance,
-				objectrafy: objectraValueSerialization,
+			const objectraContent = highestSerializationTransformator.serialize!({
+				instance: instance,
+				objectrafy: serializeValueWithinContext,
 				instanceTransformator,
 			}) as Objectra.Content<T>;
 
 			const objectra = new Objectra({
-				identifier: objectInstance.constructor, 
+				identifier: instance.constructor, 
 				identifierIsConstructor: true,
 				content: objectraContent,
-				hoistingReferences: instanceObjectraHoistings.length ? instanceObjectraHoistings : void 0,
-				isReferenceHoist: referenceShouldInstantiate,
+				hoistingReferences: objectraHoistings.length ? objectraHoistings : void 0,
+				isReferenceHoist: instanceShouldReinstantiateOnDefinition,
 				id,
 			});
 
 			return objectra;
 		}
 
-		const result = objectraValueSerialization(value);
+		const result = serializeValueWithinContext(value);
 		return result;
 	}
 
