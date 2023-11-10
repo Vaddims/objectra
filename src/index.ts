@@ -28,7 +28,9 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 	public readonly overload?: number;
 	private readonly content?: ContentType;
 	
-	public readonly identifierIsConstructor: boolean;
+	// public readonly identifierIsConstructor: boolean;
+	public readonly isClassDeclaration: boolean;
+
 	public readonly isReferenceHoist: boolean;
 	private readonly hoistingReferences: Objectra[] = [];
 
@@ -42,13 +44,13 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			isReferenceHoist = false
 		} = init;
 
-		this.identifierIsConstructor = false;
+		this.isClassDeclaration = false;
 		this.isReferenceHoist = isReferenceHoist;
 
 		if (identifier) {
-			if (typeof identifier !== 'string' && init.identifierIsConstructor) {
+			if (typeof identifier !== 'string' && init.isClassDeclaration) {
 				this.identifier = identifier;
-				this.identifierIsConstructor = true;
+				this.isClassDeclaration = true;
 			} else {
 				this.identifier = identifier;
 			}
@@ -230,8 +232,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				return undefined;
 			}
 			
-			if (!objectra.identifierIsConstructor) {
-				// TODO Resee what happens here. Class definition edge case?
+			if (objectra.isClassDeclaration) {
 				return objectra.identifier;
 			}
 
@@ -304,7 +305,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				const instance = constructInstanceWithArguments();
 				addResolvedReference(objectra, instance);
 				
-				// TODO Check how it handles unresolved references ()
+
 				const iteratorContents = instantiationTransformator.instantiate!(createInstantiationBridge(transformator)) as any[];
 				iterableInstanceContents.set(instance, iteratorContents);
 				return instance;
@@ -470,12 +471,13 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			if (typeof objectra.identifier === 'string') {
 				model.n = objectra.identifier;
 			} else if (typeof objectra.identifier === 'function') {
-				if (objectra.identifierIsConstructor) {
-					model.t = objectra.identifier.name;
-				} else {
-					model.t = Function.name;
-					model.t = objectra.identifier.name;
-				}
+				model.t = objectra.identifier.name;
+				// if (objectra.identifierIsConstructor) {
+				// 	model.t = objectra.identifier.name;
+				// } else {
+				// 	model.t = Function.name;
+				// 	model.t = objectra.identifier.name;
+				// }
 			}
 
 			if (typeof objectra.overload === 'number') {
@@ -503,8 +505,8 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				}
 			}
 
-			if (objectra.identifierIsConstructor) {
-				model.iic = objectra.identifierIsConstructor;
+			if (objectra.isClassDeclaration) {
+				model.icd = objectra.isClassDeclaration;
 			}
 
 			if (objectra.isReferenceHoist) {
@@ -584,9 +586,9 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			}
 
 			const instanceIsReference = Objectra.isValueReference(instance);
-			const instanceIsClassDefinition = typeof instance === 'function' && FunctionTypeDeterminant.isConstructor(instance);
+			const instanceIsClassDeclaration = typeof instance === 'function' && FunctionTypeDeterminant.isConstructor(instance);
 			const instanceIsReferenceDefinition = instanceIsReference && repeatingReferences.has(instance) && !referableReferences.has(instance);
-			const instanceShouldReinstantiateOnDefinition = instanceIsClassDefinition ? false : instanceIsReferenceDefinition;
+			const instanceShouldReinstantiateOnDefinition = instanceIsClassDeclaration ? false : instanceIsReferenceDefinition;
 
 			if (!instanceShouldReinstantiateOnDefinition && repeatingReferences.has(instance) && referableReferences.has(instance)) {
 				const id = referenceIdentifiers.get(instance);
@@ -598,7 +600,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				return new Objectra({ id });
 			}
 			
-			if (!instanceIsClassDefinition) {
+			if (!instanceIsClassDeclaration) {
 				// TODO Add id (bounce to compose method and handle them as full references)
 				referableReferences.add(instance);
 			}
@@ -629,6 +631,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			if (typeof instance === 'function') {
 				return new Objectra({
 					identifier: instance,
+					isClassDeclaration: instanceIsClassDeclaration,
 					isReferenceHoist: instanceShouldReinstantiateOnDefinition,
 					id,
 				});
@@ -641,8 +644,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			}) as Objectra.Content<T>;
 
 			const objectra = new Objectra({
-				identifier: instance.constructor, 
-				identifierIsConstructor: true,
+				identifier: instance.constructor,
 				content: objectraContent,
 				hoistingReferences: objectraHoistings.length ? objectraHoistings : void 0,
 				isReferenceHoist: instanceShouldReinstantiateOnDefinition,
@@ -680,7 +682,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 					...init,
 					id: target.id,
 					identifier,
-					identifierIsConstructor: target.iic ?? false,
+					isClassDeclaration: target.icd ?? false,
 					hoistingReferences: hoistings,
 					overload: target.o,
 					isReferenceHoist: target.irh ?? false,
@@ -708,7 +710,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			return new Objectra({
 				...projection,
 				id: target.id,
-				identifierIsConstructor: target.iic ?? false,
+				isClassDeclaration: target.icd ?? false,
 				hoistingReferences: target.h?.map(parseModel),
 				isReferenceHoist: target.irh ?? false,
 				overload: target.o,
@@ -874,7 +876,7 @@ export namespace Objectra {
 
 	export interface Init<ContentType extends Objectra.Content<any>> {
 		readonly identifier?: Identifier;
-		readonly identifierIsConstructor?: boolean;
+		readonly isClassDeclaration?: boolean;
 		readonly overload?: number;
 		readonly id?: number;
 		readonly hoistingReferences?: Objectra[] | undefined;
@@ -899,11 +901,11 @@ export namespace Objectra {
 		readonly t?: string; // Class constructor name
 		readonly n?: string; // Instance specification name
 		readonly o?: number; // Overload for class / instance that have the same specification / constructor name
-		readonly c?: ContentStructure<Model> | undefined;
-		readonly h?: Model[];
+		readonly c?: ContentStructure<Model> | undefined; // Content
+		readonly h?: Model[]; // Hoistings
 		readonly id?: number;
-		readonly irh?: boolean;
-		readonly iic?: boolean;
+		readonly irh?: boolean; // Is Reference Hoist (Should instantiate on declaration)
+		readonly icd?: boolean; // Is Class Declaration
 	}
 
 	export type Cluster = ObjectraCluster;

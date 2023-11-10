@@ -16,5 +16,5 @@ export type DeepWriteable<T> = { -readonly [P in keyof T]: DeepWriteable<T[P]> }
 
 
 export namespace ClassDecorator {
-  export type Accessor<T, V> = <TT = T, VV = V>(target: ClassAccessorDecoratorTarget<T, V>, context: ClassAccessorDecoratorContext<T, V>) => ClassAccessorDecoratorResult<T, V>;
+  export type Accessor<T, V> = <TT = T, VV = V>(target: ClassAccessorDecoratorTarget<TT, VV>, context: ClassAccessorDecoratorContext<TT, VV>) => ClassAccessorDecoratorResult<TT, VV>;
 }

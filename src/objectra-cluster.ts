@@ -61,8 +61,8 @@ export class ObjectraCluster {
     return this.filter(objectra => objectra.contentIsInstanceOf(constructor));
   }
 
-  public constructorTyped() {
-    return this.filter(objectra => objectra.identifierIsConstructor);
+  public classDeclarations() {
+    return this.filter(objectra => objectra.isClassDeclaration);
   }
 
   public primitiveValue(primitive: string | number | boolean) {
