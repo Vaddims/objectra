@@ -41,10 +41,6 @@ export class ObjectraCluster {
     return this.filter(objectra => objectra.isStructureEndpoint);
   }
 
-  public referenceHoists() {
-    return this.filter(objectra => objectra.isReferenceHoist);
-  }
-
   public declarations() {
     return this.filter(objectra => objectra.isDeclaration);
   }

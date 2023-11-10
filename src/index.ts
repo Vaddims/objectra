@@ -30,8 +30,6 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 	
 	// public readonly identifierIsConstructor: boolean;
 	public readonly isClassDeclaration: boolean;
-
-	public readonly isReferenceHoist: boolean;
 	private readonly hoistingReferences: Objectra[] = [];
 
 	private cachedChildObjectraCluster?: Objectra.Cluster;
@@ -40,12 +38,10 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 	private constructor(init: Objectra.Init<ContentType>) {
 		const { 
 			identifier, 
-			overload, 
-			isReferenceHoist = false
+			overload,
 		} = init;
 
 		this.isClassDeclaration = false;
-		this.isReferenceHoist = isReferenceHoist;
 
 		if (identifier) {
 			if (typeof identifier !== 'string' && init.isClassDeclaration) {
@@ -508,10 +504,6 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			if (objectra.isClassDeclaration) {
 				model.icd = objectra.isClassDeclaration;
 			}
-
-			if (objectra.isReferenceHoist) {
-				model.irh = objectra.isReferenceHoist;
-			}
 			
 			return model as Objectra.Model;
 		}
@@ -632,7 +624,6 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				return new Objectra({
 					identifier: instance,
 					isClassDeclaration: instanceIsClassDeclaration,
-					isReferenceHoist: instanceShouldReinstantiateOnDefinition,
 					id,
 				});
 			} 
@@ -647,7 +638,6 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				identifier: instance.constructor,
 				content: objectraContent,
 				hoistingReferences: objectraHoistings.length ? objectraHoistings : void 0,
-				isReferenceHoist: instanceShouldReinstantiateOnDefinition,
 				id,
 			});
 
@@ -685,7 +675,6 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 					isClassDeclaration: target.icd ?? false,
 					hoistingReferences: hoistings,
 					overload: target.o,
-					isReferenceHoist: target.irh ?? false,
 				});
 			}
 
@@ -712,7 +701,6 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				id: target.id,
 				isClassDeclaration: target.icd ?? false,
 				hoistingReferences: target.h?.map(parseModel),
-				isReferenceHoist: target.irh ?? false,
 				overload: target.o,
 			})
 
@@ -880,7 +868,6 @@ export namespace Objectra {
 		readonly overload?: number;
 		readonly id?: number;
 		readonly hoistingReferences?: Objectra[] | undefined;
-		readonly isReferenceHoist?: boolean;
 		readonly content?: ContentType;
 	}
 
@@ -904,7 +891,6 @@ export namespace Objectra {
 		readonly c?: ContentStructure<Model> | undefined; // Content
 		readonly h?: Model[]; // Hoistings
 		readonly id?: number;
-		readonly irh?: boolean; // Is Reference Hoist (Should instantiate on declaration)
 		readonly icd?: boolean; // Is Class Declaration
 	}
 
