@@ -253,23 +253,15 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			});
 			
 			if (transformator.instantiate) {
-				// TODO Make fully custom instantiation
-				// TODO Refactor
-				// if (!objectra.isDeclaration) {
-				// 	const instance = transformator.instantiate(createInstantiationBridge(transformator));
-				// 	return instance;
-				// }
-
-				const instance = constructInstanceWithArguments();
-
-				const returnInstance = transformator.instantiate({
+				const preinstance = transformator.argumentPassthrough ? constructInstanceWithArguments() : undefined;
+				const instance = transformator.instantiate({
 					...createInstantiationBridge(transformator),
-					instance,
+					instance: preinstance,
 				});
 
-				addResolvedReference(objectra, returnInstance);
+				addResolvedReference(objectra, instance);
 
-				return returnInstance;
+				return instance;
 			}
 
 			const useForceArgumentPassthrough = transformator.ignoreDefaultArgumentBehaviour && transformator.argumentPassthrough;
@@ -354,6 +346,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			}
 
 			// TODO Resee edge cases
+			// 1. Instantiating after custom serialization (Throws)
 			throw `Unexpected error while instantiating. Possible problems (Did not register ${objectra.identifier!.name} class)`
 
 			function createInstantiationBridge(transformator: Transformator): Transformator.InstantiationBridge<any, any> {
@@ -468,12 +461,6 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				model.n = objectra.identifier;
 			} else if (typeof objectra.identifier === 'function') {
 				model.t = objectra.identifier.name;
-				// if (objectra.identifierIsConstructor) {
-				// 	model.t = objectra.identifier.name;
-				// } else {
-				// 	model.t = Function.name;
-				// 	model.t = objectra.identifier.name;
-				// }
 			}
 
 			if (typeof objectra.overload === 'number') {
@@ -604,6 +591,10 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			const transformators: Transformator[] = [...superTransformators];
 			if (instanceTransformator) {
 				transformators.unshift(instanceTransformator);
+			}
+
+			if (instanceTransformator.serialize && !instanceTransformator.ignoreDefaultArgumentBehaviour && !instanceTransformator.instantiate) {
+				throw new Error(`Transformator ${instanceTransformator.identifierToString()} must have an instantiator`);
 			}
 
 			const highestSerializationTransformator = Array.from(transformators).find(transformator => transformator.serialize);

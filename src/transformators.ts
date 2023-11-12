@@ -67,7 +67,6 @@ export const objectTransformator = Transformator.register(Object)
         value: getRepresenterObjectra(representer),
         initialTransformator,
         keyPath,
-        
       });
     }
 
