@@ -1,4 +1,4 @@
-import type { Constructor, IndexableObject, ES3Primitives, ES5Primitives } from "./types/util.types";
+import type { Constructor, IndexableObject, ES3Primitives, ES6Primitives } from "./types/util.types";
 
 export function* getConstructorSuperConstructors(instance: Constructor) {
   let constructor = instance;
@@ -18,7 +18,7 @@ export function isES3Primitive(value: unknown): value is ES3Primitives {
   return value === null || primitiveTypes.includes(typeof value);
 }
 
-export function isES5Primitive(value: unknown): value is ES5Primitives {
+export function isES6Primitive(value: unknown): value is ES6Primitives {
   const primitiveTypes = ['undefined', 'string', 'number', 'boolean', 'symbol', 'bigint'];
   return value === null || primitiveTypes.includes(typeof value);
 }

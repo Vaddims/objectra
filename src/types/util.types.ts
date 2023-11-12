@@ -1,5 +1,5 @@
 export type ES3Primitives = number | string | boolean | null | undefined;
-export type ES5Primitives = ES3Primitives | Symbol | BigInt;
+export type ES6Primitives = ES3Primitives | Symbol | BigInt;
 
 export type IterableEntity = unknown[] | IndexableObject;
 export type IndexableObject<T = unknown> = { [key: string | symbol]: T } & Object;

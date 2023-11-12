@@ -1,4 +1,4 @@
-import { everyArrayElementIsEqual, FunctionTypeDeterminant, isES3Primitive, isES5Primitive } from "./utils";
+import { everyArrayElementIsEqual, FunctionType, FunctionTypeDeterminant, getFunctionType, isES3Primitive, isES6Primitive } from "./utils";
 import { ObjectraCluster } from "./objectra-cluster";
 import { Backloop } from "./types/backloop.types";
 import { Transformator } from "./transformator";
@@ -28,8 +28,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 	public readonly overload?: number;
 	private readonly content?: ContentType;
 	
-	// public readonly identifierIsConstructor: boolean;
-	public readonly isClassDeclaration: boolean;
+	public readonly isStructureDeclaration: boolean;
 	private readonly hoistingReferences: Objectra[] = [];
 
 	private cachedChildObjectraCluster?: Objectra.Cluster;
@@ -41,12 +40,12 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			overload,
 		} = init;
 
-		this.isClassDeclaration = false;
+		this.isStructureDeclaration = false;
 
 		if (identifier) {
-			if (typeof identifier !== 'string' && init.isClassDeclaration) {
+			if (typeof identifier !== 'string' && init.isStructureDeclaration) {
 				this.identifier = identifier;
-				this.isClassDeclaration = true;
+				this.isStructureDeclaration = true;
 			} else {
 				this.identifier = identifier;
 			}
@@ -228,7 +227,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				return undefined;
 			}
 			
-			if (objectra.isClassDeclaration) {
+			if (objectra.isStructureDeclaration) {
 				return objectra.identifier;
 			}
 
@@ -265,18 +264,15 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			}
 
 			const useForceArgumentPassthrough = transformator.ignoreDefaultArgumentBehaviour && transformator.argumentPassthrough;
-			if (isES5Primitive(objectra.content) && (typeArgumentLenght === 1 || useForceArgumentPassthrough)) {
-				// ! Bundle all properties to one constructor argument object (Ignore all argument rules)
-				// TODO Handle not only primitives as content
+			if (isES6Primitive(objectra.content) && (typeArgumentLenght === 1 || useForceArgumentPassthrough)) {
 				const instance = constructInstanceWithArguments(objectra.content);
 				addResolvedReference(objectra, instance);
 				return instance;
 			}
+			
 
 			if (!FunctionTypeDeterminant.isConstructor(transformator.type)) {
-				// ! Transformator type is not a constructor [but function] (Edge case)
-				// TODO Refactor
-				throw new Error(`Can not get superclasses of function`);
+				throw new Error('Invalid schema');
 			}
 			
 			// ! Search to the nearest transformator with a defined instantiation function
@@ -292,7 +288,6 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				// TODO Add flags (argumentPassthrough) for better instantiation
 				const instance = constructInstanceWithArguments();
 				addResolvedReference(objectra, instance);
-				
 
 				const iteratorContents = instantiationTransformator.instantiate!(createInstantiationBridge(transformator)) as any[];
 				iterableInstanceContents.set(instance, iteratorContents);
@@ -346,7 +341,6 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			}
 
 			// TODO Resee edge cases
-			// 1. Instantiating after custom serialization (Throws)
 			throw `Unexpected error while instantiating. Possible problems (Did not register ${objectra.identifier!.name} class)`
 
 			function createInstantiationBridge(transformator: Transformator): Transformator.InstantiationBridge<any, any> {
@@ -370,7 +364,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 						return new transformator.type(...typeArguments);
 					}
 	
-					return transformator.type(...typeArguments);							
+					return transformator.type(...typeArguments);
 				} catch (error) {
 					throw new InvalidPassthroughArgumentError(transformator.type, error);
 				}
@@ -420,6 +414,10 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 					// Write the reference to an endpoint
 					const keyIsLast = key === fullRelativePath.at(-1);
 					if (keyIsLast) {
+						if (!(drilledObject[key] instanceof Objectra.UnresolvedReferencePlaceholder)) {
+							throw new Error('Invalid path sequence for definition injection. Possibly invalid pathKey applience in custom intantiator method');
+						}
+
 						drilledObject[key] = resolution;
 						awaitingDeclarationLocatedConsumer.delete(objectra);
 						break;
@@ -488,8 +486,8 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				}
 			}
 
-			if (objectra.isClassDeclaration) {
-				model.icd = objectra.isClassDeclaration;
+			if (objectra.isStructureDeclaration) {
+				model.isd = objectra.isStructureDeclaration;
 			}
 			
 			return model as Objectra.Model;
@@ -565,7 +563,8 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			}
 
 			const instanceIsReference = Objectra.isValueReference(instance);
-			const instanceIsClassDeclaration = typeof instance === 'function' && FunctionTypeDeterminant.isConstructor(instance);
+
+			const instanceIsClassDeclaration = typeof instance === 'function';
 			const instanceIsReferenceDefinition = instanceIsReference && repeatingReferences.has(instance) && !referableReferences.has(instance);
 			const instanceShouldReinstantiateOnDefinition = instanceIsClassDeclaration ? false : instanceIsReferenceDefinition;
 
@@ -614,7 +613,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			if (typeof instance === 'function') {
 				return new Objectra({
 					identifier: instance,
-					isClassDeclaration: instanceIsClassDeclaration,
+					isStructureDeclaration: instanceIsClassDeclaration,
 					id,
 				});
 			} 
@@ -663,7 +662,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 					...init,
 					id: target.id,
 					identifier,
-					isClassDeclaration: target.icd ?? false,
+					isStructureDeclaration: target.isd ?? false,
 					hoistingReferences: hoistings,
 					overload: target.o,
 				});
@@ -690,7 +689,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			return new Objectra({
 				...projection,
 				id: target.id,
-				isClassDeclaration: target.icd ?? false,
+				isClassDeclaration: target.isd ?? false,
 				hoistingReferences: target.h?.map(parseModel),
 				overload: target.o,
 			})
@@ -855,7 +854,7 @@ export namespace Objectra {
 
 	export interface Init<ContentType extends Objectra.Content<any>> {
 		readonly identifier?: Identifier;
-		readonly isClassDeclaration?: boolean;
+		readonly isStructureDeclaration?: boolean;
 		readonly overload?: number;
 		readonly id?: number;
 		readonly hoistingReferences?: Objectra[] | undefined;
@@ -882,7 +881,7 @@ export namespace Objectra {
 		readonly c?: ContentStructure<Model> | undefined; // Content
 		readonly h?: Model[]; // Hoistings
 		readonly id?: number;
-		readonly icd?: boolean; // Is Class Declaration
+		readonly isd?: boolean; // Is Class Declaration
 	}
 
 	export type Cluster = ObjectraCluster;

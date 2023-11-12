@@ -1,4 +1,4 @@
-import { Objectra } from '../src';
+import { Objectra, Transformator } from '../src';
 
 const number = 42;
 const string = 'Hello world';
@@ -106,6 +106,29 @@ describe('test objectra serialization and instantiation', () => {
 			expect(complexObjectDuplicate).toStrictEqual(complexObject);
 			expect(complexObjectDuplicate).not.toBe(complexObject);
 		});
+
+		describe('function', () => {
+			test('plain', () => {
+				Transformator.register(return42);
+				function return42() {
+					return 42;
+				}
+				
+				const duplicateFunction = Objectra.duplicate(return42);
+				expect(duplicateFunction).toBe(return42);
+			});
+
+			test('in object', () => {
+				const obj = {
+					fn: () => {
+						return 'hello world';
+					}
+				}
+
+				const duplicateObj = Objectra.duplicate(obj);
+				expect(obj.fn).toBe(duplicateObj.fn);
+			})
+		})
 
 		test('map', () => {
 			const complexMap = new Map<string, unknown>([

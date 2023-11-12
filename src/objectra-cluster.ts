@@ -49,16 +49,16 @@ export class ObjectraCluster {
     return this.filter(objectra => objectra.isReferenceDeclaration);
   }
 
+  public structureDeclaration() {
+    return this.filter(objectra => objectra.isStructureDeclaration);
+  }
+
   public referenceConsumers() {
     return this.filter(objectra => objectra.isReferenceConsumer);
   }
 
   public instancesOf(constructor: Constructor) {
     return this.filter(objectra => objectra.contentIsInstanceOf(constructor));
-  }
-
-  public classDeclarations() {
-    return this.filter(objectra => objectra.isClassDeclaration);
   }
 
   public primitiveValue(primitive: string | number | boolean) {

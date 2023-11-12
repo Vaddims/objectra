@@ -357,14 +357,16 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
     return transformator;
   }
 
-  public static register<RegistrationIdentifier extends Objectra.Identifier>(identifier: RegistrationIdentifier) {
-    if (Transformator.exists(identifier)) {
+  public static register<RegistrationIdentifier extends Objectra.Identifier>(identifier: RegistrationIdentifier, overload?: number) {
+    if (Transformator.exists(identifier, overload)) {
+      // TODO Change error -> Identifier with this overload already exists (trace max overload and display n+1 to be declared)
       throw new TransformatorAlreadyRegisteredError(identifier);
     }
 
     const transformator = Transformator.createInherited({
       creationMethod: Transformator.CreationMethod.Manual,
       type: identifier,
+      overload,
     });
 
     Transformator.staticRegistrations.push(transformator);
@@ -569,6 +571,7 @@ export namespace Transformator {
 
   export interface InheritedInitOptions<T extends Objectra.Identifier, V, S> {
     readonly type: T;
+    readonly overload?: number;
     readonly creationMethod: Transformator.CreationMethod;
     readonly specifications?: SpecificationOptions;
     readonly transformers?: Transformers<V, S>;
