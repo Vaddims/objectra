@@ -370,7 +370,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
     });
 
     Transformator.staticRegistrations.push(transformator);
-    return transformator;
+    return transformator as Transformator<RegistrationIdentifier extends string ? any : RegistrationIdentifier, unknown, unknown>;
   }
 
   public static registerDynamic<T extends Constructor | Function>(identifier: T) {

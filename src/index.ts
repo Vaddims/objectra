@@ -232,14 +232,14 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			}
 
 			if (typeof objectra.identifier === 'string') {
-				// ! Next code will not be executed. From model already covers the current functionality.
-				// TODO Add instantiation from named identifiers
 				const transformator = Transformator.getStatic(objectra.identifier);
 				if (!transformator.instantiate) {
 					throw new InstantiationMethodDoesNotExistError(objectra.identifier);
 				}
 
-				return transformator.instantiate(createInstantiationBridge(transformator));
+				const instance = transformator.instantiate(createInstantiationBridge(transformator));
+				addResolvedReference(objectra, instance);
+				return instance;
 			}
 
 			const transformator = Transformator.get(objectra.identifier!, objectra.overload);
@@ -536,10 +536,16 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		return [representer, resolveReference];
 	}
 
-	public static from<T>(value: T): Objectra<Objectra.Content<T>, T> {
+	public static from<T>(value: T, options: Objectra.Decomposition.Options = {}): Objectra<Objectra.Content<T>, T> {
 		const objectReferenceData = Objectra.getObjectData(value);
 		const referenceHoistingParentMap = Objectra.getReferenceHoistingParents(objectReferenceData);
 		const referableReferences = new Set<Objectra.Reference>();
+		const alternativeReferenceTransformation = new Map(
+			options.altMapping?.map(([reference, identifer, overload]) => {
+				const transformator = Transformator.getStatic(identifer, overload);
+				return [reference, transformator];
+			})
+		);
 		
 		const { repeatingReferences } = objectReferenceData;
 		const referenceIdentifiers = new Map<Objectra.Reference, number>(
@@ -582,9 +588,11 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				// TODO Add id (bounce to compose method and handle them as full references)
 				referableReferences.add(instance);
 			}
+
+			const alternativeTransformator = alternativeReferenceTransformation.get(instance);
 			
 			const instanceConstrucor = instance.constructor as Constructor;
-			const instanceTransformator = Transformator.get(instanceConstrucor);
+			const instanceTransformator = alternativeTransformator ?? Transformator.get(instanceConstrucor);
 			const superTransformators = Transformator.getSuperTransformators(instanceConstrucor);
 
 			const transformators: Transformator[] = [...superTransformators];
@@ -625,7 +633,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			}) as Objectra.Content<T>;
 
 			const objectra = new Objectra({
-				identifier: instance.constructor,
+				identifier: alternativeTransformator ? alternativeTransformator.type : instance.constructor,
 				content: objectraContent,
 				hoistingReferences: objectraHoistings.length ? objectraHoistings : void 0,
 				id,
@@ -668,6 +676,10 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				});
 			}
 
+			if (target.n) {
+				return constructObjectra(target.n)
+			}
+
 			if (target.t) {
 				const targetStringIdentifier = typeof target.n === 'string' ? target.n : target.t;
 
@@ -701,8 +713,8 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		return parseModel(typeof model === 'string' ? JSON.parse(model) : model);
 	}
 
-	public static duplicate<T>(value: T) {
-		return Objectra.from(value).compose();
+	public static duplicate<T>(value: T, options?: Objectra.Duplication.Options) {
+		return Objectra.from(value, options).compose();
 	}
 
 	public static toModel<T>(value: T): Objectra.Model {
@@ -885,6 +897,22 @@ export namespace Objectra {
 	}
 
 	export type Cluster = ObjectraCluster;
+
+	export namespace Decomposition {
+		export namespace Options {
+
+		}
+
+		export interface Options {
+			altMapping?: [Objectra.Reference, string, number?][];
+		}
+	}
+
+	export namespace Duplication {
+		export interface Options extends Decomposition.Options {
+
+		}
+	}
 }
 
 export * as errors from './errors';
