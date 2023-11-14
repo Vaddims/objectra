@@ -4,14 +4,6 @@ import { Backloop } from "./types/backloop.types";
 import { Transformator } from "./transformator";
 import './transformators';
 
-import {
-	InvalidPassthroughArgumentError, 
-	InstantiationMethodDoesNotExistError,
-	TransformatorMatchNotFoundError,
-	ForeignBackloopReferenceError,
-	TransformatorNotFoundError, 
-} from "./errors";
-
 import type { 
 	Constructor, 
 	ES3Primitives, 
@@ -21,6 +13,7 @@ import type {
 	IterableEntity,
 	Writeable,
 } from "./types/util.types";
+import { InternalError, ObjectraError, TransformatorError } from './errors';
 
 export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Content<any>, InstanceType = any> {
 	public readonly id?: number;
@@ -234,7 +227,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			if (typeof objectra.identifier === 'string') {
 				const transformator = Transformator.getStatic(objectra.identifier);
 				if (!transformator.instantiate) {
-					throw new InstantiationMethodDoesNotExistError(objectra.identifier);
+					throw new TransformatorError.TransformatorInstantiatorMissingError(objectra.identifier);
 				}
 
 				const instance = transformator.instantiate(createInstantiationBridge(transformator));
@@ -272,16 +265,14 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			
 
 			if (!FunctionTypeDeterminant.isConstructor(transformator.type)) {
-				throw new Error('Invalid schema');
+				throw new TransformatorError.TransformatorInvalidTypeError(transformator.type)
 			}
 			
 			// ! Search to the nearest transformator with a defined instantiation function
 			const superTransformators = Transformator.getSuperTransformators(transformator.type);
 			const instantiationTransformator = Array.from(superTransformators).find(transformator => transformator.instantiate);
 			if (!instantiationTransformator) {
-				// TODO define class error
-				throw 'Ancestor with instantiation method not found';
-				// throw new InvalidInstantiationArgumentQuantityError(objectra.identifier);
+				throw new TransformatorError.TransformatorAncestorsNotFoundError(transformator.type);
 			}
 
 			if (transformator.useSerializationSymbolIterator) {
@@ -317,16 +308,6 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				return instance;
 			}
 
-			if (transformator.argumentPassthrough && (typeArgumentLenght === 1 || transformator.ignoreDefaultArgumentBehaviour)) {
-				// ! Bundle all properties to one constructor argument object
-				// TODO Mark under experimental flag or remove
-				const content = instantiationTransformator.instantiate!(createInstantiationBridge(transformator));
-
-				const instance = constructInstanceWithArguments(content);
-				addResolvedReference(objectra, instance);
-				return instance;
-			}
-
 			if (typeArgumentLenght === 0) {
 				// ! Pure constructor call
 				const instance = constructInstanceWithArguments();
@@ -340,8 +321,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				return instance;
 			}
 
-			// TODO Resee edge cases
-			throw `Unexpected error while instantiating. Possible problems (Did not register ${objectra.identifier!.name} class)`
+			throw new ObjectraError.CompositionError(objectra.identifier);
 
 			function createInstantiationBridge(transformator: Transformator): Transformator.InstantiationBridge<any, any> {
 				return {
@@ -366,7 +346,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 	
 					return transformator.type(...typeArguments);
 				} catch (error) {
-					throw new InvalidPassthroughArgumentError(transformator.type, error);
+					throw new TransformatorError.InvalidConstructorArgumetsError(transformator.type, error);
 				}
 			}
 		}
@@ -415,7 +395,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 					const keyIsLast = key === fullRelativePath.at(-1);
 					if (keyIsLast) {
 						if (!(drilledObject[key] instanceof Objectra.UnresolvedReferencePlaceholder)) {
-							throw new Error('Invalid path sequence for definition injection. Possibly invalid pathKey applience in custom intantiator method');
+							throw new ObjectraError.InvalidReferenceInjectionPathError();
 						}
 
 						drilledObject[key] = resolution;
@@ -450,7 +430,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 	public toModel(): Objectra.Model {
 		const createModel = (objectra: Objectra) => {
 			if (objectra.identifier && !Transformator.staticExists(objectra.identifier, objectra.overload)) {
-				throw new TransformatorNotFoundError(objectra.identifier);
+				throw new TransformatorError.TransformatorNotFoundError(objectra.identifier);
 			}
 			
 			const model: Writeable<Objectra.Model> = {};
@@ -526,7 +506,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		const resolveReference: Objectra.BackloopReferenceResolver = <T extends Backloop.Reference>(representer: T) => {
 			const objectra = referenceMap.get(representer);
 			if (!objectra) {
-				throw new ForeignBackloopReferenceError();
+				throw new ObjectraError.ForeignBackloopReferenceError();
 			}
 
 			return objectra as Backloop.ReferenceResolve<T>;
@@ -564,8 +544,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			const instance = providedInstance as T & Objectra.Reference;
 			
 			if (typeof instance.constructor !== 'function') {
-				// TODO Create custom error
-				throw new Error(`Can not objectrafy an object inherited value without a constructor`);
+				throw new ObjectraError.TypeConstructorMissingError(instance);
 			}
 
 			const instanceIsReference = Objectra.isValueReference(instance);
@@ -577,8 +556,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			if (!instanceShouldReinstantiateOnDefinition && repeatingReferences.has(instance) && referableReferences.has(instance)) {
 				const id = referenceIdentifiers.get(instance);
 				if (typeof id === 'undefined') {
-					// TODO Create custom error
-					throw new Error('Internal id not found')
+					throw new InternalError.ConsumerIdMissingError();
 				}
 
 				return new Objectra({ id });
@@ -601,12 +579,12 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			}
 
 			if (instanceTransformator.serialize && !instanceTransformator.ignoreDefaultArgumentBehaviour && !instanceTransformator.instantiate) {
-				throw new Error(`Transformator ${instanceTransformator.identifierToString()} must have an instantiator`);
+				throw new TransformatorError.TransformatorInstantiatorMissingError(instanceTransformator.identifierToString());
 			}
 
 			const highestSerializationTransformator = Array.from(transformators).find(transformator => transformator.serialize);
 			if (!highestSerializationTransformator) {
-				throw new TransformatorMatchNotFoundError(instance.constructor);
+				throw new TransformatorError.TransformatorAncestorsNotFoundError(instance.constructor);
 			}
 
 			const hoistingReferences = Array
@@ -704,10 +682,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 				isClassDeclaration: target.isd ?? false,
 				hoistingReferences: target.h?.map(parseModel),
 				overload: target.o,
-			})
-
-			// throw new Error('Parsing model by instance specification name is not supported yet');
-			// TODO ADD model parsing for instance specification names
+			});
 		}
 
 		return parseModel(typeof model === 'string' ? JSON.parse(model) : model);

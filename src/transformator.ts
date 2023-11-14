@@ -3,18 +3,7 @@ import { getConstructorSuperConstructors, FunctionTypeDeterminant } from './util
 import type { Constructor, Writeable } from "./types/util.types";
 import type { Backloop } from "./types/backloop.types";
 
-import { 
-  ArgumentPassthroughIndexAlreadyExistsError,
-  InstantiationMethodDoesNotExistError, 
-  InvalidInstantiationArgumentQuantityError, 
-  SelfInstantiationError, 
-  SelfSerializationError, 
-  SerializationMethodDoesNotExistError, 
-  TransformatorAlreadyRegisteredError,
-  TransformatorAlreadyConfiguredError, 
-  TransformatorNotFoundError, 
-  ArgumentPassthroughIncompatiblanceError
-} from "./errors";
+import { ObjectraError, TransformatorError } from './errors';
 
 type IdentifierInstance<RegistrationIdentifier> = RegistrationIdentifier extends Constructor 
   ? InstanceType<RegistrationIdentifier> 
@@ -27,7 +16,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
   public readonly type: IdentifierType;
   public readonly creationMethod: Transformator.CreationMethod;
   public readonly overload: number | undefined;
-  
+
   // Argument grouping
   // TODO Merge argumentPassthrough with argumentPassthroughPropertyKeys (as null or array)
   public readonly argumentPassthrough: boolean;
@@ -75,8 +64,16 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
     this.branchedProperties = [...options.branchedProperties];
     
     if (!this.ignoreDefaultArgumentBehaviour && !this.instantiator && this.argumentPassthrough && typeof this.type === 'function' && this.type.length > 1) {
-      throw new InvalidInstantiationArgumentQuantityError(this.identifierToString());
+      throw new TransformatorError.InvalidConstructorArgumentQuantityError(this.identifierToString());
     }
+  }
+
+  public get isNameIdentified() {
+    return typeof this.type === 'string';
+  }
+
+  public get isConstructorIdentified() {
+    return !this.isNameIdentified && FunctionTypeDeterminant.isConstructor(this.type as Function);
   }
 
   public static typeToString(identifer: Objectra.Identifier) {
@@ -107,7 +104,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
 
   private serializationProxy<T extends InstanceType>(bridge: Transformator.SerializationBridge<T>): Objectra.Content {
     if (!this.serializator) {
-      throw new SerializationMethodDoesNotExistError(this.identifierToString());
+      throw new TransformatorError.TransformatorSerializatorMissingError(this.identifierToString());
     }
 
     const { instance, objectrafy, instanceTransformator = this } = bridge;
@@ -121,7 +118,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
       });
     } catch (error) {
       if (error instanceof RangeError) {
-        throw new SelfSerializationError(this.identifierToString(), error);
+        throw new TransformatorError.TransformatorSelfSerializationError(this.identifierToString(), error);
       }
 
       throw error;
@@ -130,7 +127,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
 
   private instantiationProxy(bridge: Transformator.InstantiationBridge<SerializationType, InstanceType>): InstanceType {
     if (!this.instantiator) {
-      throw new InstantiationMethodDoesNotExistError(this.identifierToString());
+      throw new TransformatorError.TransformatorInstantiatorMissingError(this.identifierToString());
     }
 
     const { value, instantiate, instance, initialTransformator = this, keyPath } = bridge;
@@ -156,7 +153,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
       });
     } catch (error) {
       if (error instanceof RangeError) {
-        throw new SelfInstantiationError(this.identifierToString(), error);
+        throw new TransformatorError.TransformatorSelfInstantiationError(this.identifierToString(), error);
       }
 
       throw error;
@@ -167,7 +164,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
     options: Transformator.ConfigOptions<IdentifierInstance<RegistrationIdentifier>, SerializedStructure> = {},
   ) {
     if (!this.configurable) {
-      throw new TransformatorAlreadyConfiguredError(this.type);
+      throw new TransformatorError.TransformatorConfigSealedError(this.type);
     }
 
     const transformatorIndex = Transformator.staticRegistrations.findIndex(
@@ -175,7 +172,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
     );
 
     if (transformatorIndex === -1) {
-      throw new TransformatorNotFoundError(this.type);
+      throw new TransformatorError.TransformatorNotFoundError(this.type);
     }
 
     const splittedConfigOptions = Transformator.splitConfigOptions(options);
@@ -260,7 +257,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
   public static getStaticByStringType(name: string, overload?: number) {
     const transformator = Transformator.findStaticByStringType(name, overload);
     if (!transformator) {
-      throw new TransformatorNotFoundError(name);
+      throw new TransformatorError.TransformatorNotFoundError(name);
     }
 
     return transformator;
@@ -273,7 +270,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
   public static getStatic<T extends Objectra.Identifier>(identifier: T, overload?: number) {
     const transformator = Transformator.findStatic(identifier, overload);
     if (!transformator) {
-      throw new TransformatorNotFoundError(identifier);
+      throw new TransformatorError.TransformatorNotFoundError(identifier);
     }
 
     return transformator;
@@ -294,7 +291,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
   public static getAvailable<T extends Objectra.Identifier>(identifier: T, overload?: number) {
     const transformator = Transformator.findAvailable(identifier, overload);
     if (!transformator) {
-      throw new TransformatorNotFoundError(identifier);
+      throw new TransformatorError.TransformatorNotFoundError(identifier);
     }
 
     return transformator;
@@ -320,25 +317,6 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
     return superTransfarmators.next().value ?? null;
   }
 
-  public static *getTransformatorsOfSuperConstructor<T extends Constructor>(constructor: T) {
-    Transformator.get(constructor); // Fire error if not found
-
-    for (const transformator of Transformator.staticRegistrations) {
-      if (typeof transformator.type !== 'function' || !FunctionTypeDeterminant.isConstructor(transformator.type)) {
-        continue;
-      }
-
-      const superConstructors = getConstructorSuperConstructors(transformator.type);
-      for (const SuperConstructor of superConstructors) {
-        if (constructor !== SuperConstructor) {
-          continue;
-        }
-
-        yield transformator.type as T;
-      }
-    }
-  }
-
   private static createInherited<T extends Objectra.Identifier, V, S>(options: Transformator.InheritedInitOptions<T, V, S>): Transformator<T, V, S> {
     const typeConstructor = Transformator.getIdentifierConstructor(options.type);
     const parentTransformator = Transformator.getParentTransformator(typeConstructor);
@@ -360,7 +338,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
   public static register<RegistrationIdentifier extends Objectra.Identifier>(identifier: RegistrationIdentifier, overload?: number) {
     if (Transformator.exists(identifier, overload)) {
       // TODO Change error -> Identifier with this overload already exists (trace max overload and display n+1 to be declared)
-      throw new TransformatorAlreadyRegisteredError(identifier);
+      throw new TransformatorError.TransformatorRegistrationDuplicationError(identifier);
     }
 
     const transformator = Transformator.createInherited({
@@ -391,7 +369,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
   public static Register<T = unknown, S = any, K extends Constructor = T extends Constructor ? T : Constructor<T>>(options: Transformator.ConfigOptions<IdentifierInstance<K>, S> = {}) {
     return (constructor: K, context: ClassDecoratorContext): void => {
       if (Transformator.exists(constructor)) {
-        throw new TransformatorAlreadyRegisteredError(constructor);
+        throw new TransformatorError.TransformatorRegistrationDuplicationError(constructor);
       }
 
       const callbackQueue = [...this.awaitingRegistrationFieldResolvers];
@@ -401,7 +379,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
       options = Object.assign(parentOptions, options);
       
       for (const resolve of callbackQueue) {
-        const resolvedConfigOptions = resolve({ ...options });
+        const resolvedConfigOptions = resolve({ ...options }, constructor);
         options = Object.assign(options, resolvedConfigOptions);
       }
 
@@ -431,7 +409,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
     return function<C, V>(_: undefined, context: ClassFieldDecoratorContext<C, V>) {
       const propertyKey = context.name.toString() // TODO add symbols
 
-      const resolver = (transformatorOptions: Transformator.ConfigOptions<any, any>) => {
+      const resolver: Transformator.RegistrationCallback = (transformatorOptions, type) => {
         const newTransformatorOptions: Writeable<Transformator.ConfigOptions<any, any>> = {};
 
         const parentPropertyExclusionMask = transformatorOptions.propertyExclusionMask ?? [];
@@ -464,9 +442,9 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
     return function<T, V>(_: undefined, context: ClassFieldDecoratorContext<T, V>) {
       const propertyKey = context.name.toString() // todo add symbols
 
-      const resolver = (options: Transformator.ConfigOptions<any, any>) => {
-        if (options.argumentPassthrough) {
-          throw new ArgumentPassthroughIncompatiblanceError();
+      const resolver: Transformator.RegistrationCallback = (options: Transformator.ConfigOptions<any, any>, type) => {
+        if (options.argumentPassthrough) { 
+          throw 'TODO REFACTOR / UNIFY'
         }
         
         const customOptions = {
@@ -479,7 +457,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
         }
 
         if (customOptions.argumentPassthroughPropertyKeys[argumentIndex]) {
-          throw new ArgumentPassthroughIndexAlreadyExistsError(undefined, argumentIndex);
+          throw new TransformatorError.ConstructorArgumentIndexDuplicationError(type, argumentIndex);
         }
 
         customOptions.argumentPassthroughPropertyKeys[argumentIndex] = propertyKey;
@@ -589,6 +567,6 @@ export namespace Transformator {
 
   export type RegistrationCallbackQueueSet = Set<RegistrationCallback>;
   export interface RegistrationCallback<V = any, S = any> {
-    (options: ConfigOptions<V, S>): Writeable<ConfigOptions<V, S>>;
+    (options: ConfigOptions<V, S>, type: Objectra.Identifier): Writeable<ConfigOptions<V, S>>;
   }
 }

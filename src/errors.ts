@@ -2,136 +2,252 @@ import type { Objectra } from ".";
 import { Transformator } from "./transformator";
 
 interface TransformatorErrorOptions {
-  readonly solution?: string;
+  readonly solution?: string | string[];
   readonly cause?: unknown;
 }
 
-export class TransformatorError extends Error {
+class TransformationError extends Error {
   public readonly cause?: Error;
+  public readonly possibleSolutions: string[];
 
   constructor(message: string, options?: TransformatorErrorOptions) {
-    const { solution, cause } = options || {};
+    const possibleSolutionStructure = options?.solution ?? [];
+    const possibleSolutions = typeof possibleSolutionStructure === 'string' 
+    ? [possibleSolutionStructure] 
+    : possibleSolutionStructure;
 
-
-    let composedMessage = message;
-    if (solution) {
-      composedMessage += `\n-> ${solution}`;
-    }
-    
+    const composedMessage = TransformationError.composeMessage(message, possibleSolutions);
     super(composedMessage);
 
     this.name = this.constructor.name;
-    if (cause instanceof Error) {
-      this.cause = cause;
+    this.possibleSolutions = possibleSolutions;
+    if (options?.cause instanceof Error) {
+      this.cause = options.cause;
+    }
+  }
+
+  private static composeMessage(message: string, solutions: string[] = []) {
+    let composedMessage = message;
+
+    if (solutions.length > 0) {
+      composedMessage += `. Possible solution${solutions.length > 1 ? 's' : ''}:`;
+    }
+
+    for (let i = 0; i < solutions.length; i++) {
+      const solutionMessage = solutions[i];
+      composedMessage += `\n${i}. ${solutionMessage}`;
+    }
+
+    return composedMessage;
+  }
+}
+
+export class InternalError extends TransformationError {
+  constructor(message: string) {
+    super(`Internal error: ${message}`, {
+      solution: [
+        `Update the package to its latest version`,
+        `If the problem is not a 'known problem', create an issue in the package repo`,
+      ],
+    });
+  }
+}
+
+export namespace InternalError {
+  export class ConsumerIdMissingError extends InternalError {
+    constructor() {
+      super(`Instance was not registered as reference and no reference id was found`);
     }
   }
 }
 
-export class TransformatorNotFoundError extends TransformatorError {
-  constructor(identifier: Objectra.Identifier) {
-    const typeName = Transformator.typeToString(identifier)
-    super(`The transformator for ${typeName} type is not registered.`);
+export class ObjectraError extends TransformationError {}
+export namespace ObjectraError {
+  export class ForeignBackloopReferenceError extends ObjectraError {
+    constructor(cause?: unknown) {
+      super(`The backloop reference resolver got a reference that does not belong to the origin backloop tree`, {
+        cause,
+      });
+    }
+  }
+
+  export class CompositionError extends ObjectraError {
+    constructor(identifier?: Objectra.Identifier | undefined, cause?: unknown) {
+      const typeName = identifier ? Transformator.typeToString(identifier) : null;
+      const objectraName = typeName ? `Objectra ${typeName}` : `Objectra`;
+
+      const solutions: string[] = [];
+      if (typeName) {
+        solutions.unshift(`Register (${typeName}) transformator`);
+      }
+
+      super(`${objectraName} could not compose into an instance`, {
+        cause,
+        solution: [
+          ...solutions,
+        ]
+      });
+    }
+  }
+
+  export class InvalidReferenceInjectionPathError extends ObjectraError {
+    constructor() {
+      super(`Invalid reference injection path.`, {
+        solution: [
+          `Make sure to correctly apply (pathKey)s in custom intantiators`,
+        ]
+      })
+    }
+  }
+
+  export class TypeConstructorMissingError extends ObjectraError {
+    constructor(instance: any) {
+      super(`Instance (${instance}) constructor is missing`);
+    }
   }
 }
 
-export class TransformatorAlreadyRegisteredError extends TransformatorError {
-  constructor(identifier: Objectra.Identifier) {
-    const typeName = Transformator.typeToString(identifier)
-    super(`The transformator for ${typeName} type is already registered.`);
+export class TransformatorError extends TransformationError {}
+export namespace TransformatorError {
+  const noOptionalRegistrationsMessage = 'Make sure the registration is guaranteed to be defined and is not inside of statements';
+  export class TransformatorNotFoundError extends TransformatorError {
+    constructor(identifier: Objectra.Identifier) {
+      const typeName = Transformator.typeToString(identifier);
+      super(`Transformator (${typeName}) not found`, {
+        solution: [
+          `Register the transformator`,
+          noOptionalRegistrationsMessage,
+        ],
+      });
+    }
   }
-}
 
-export class TransformatorAlreadyConfiguredError extends TransformatorError {
-  constructor(identifier: Objectra.Identifier) {
-    const typeName = Transformator.typeToString(identifier);
-    super(`The transformator for ${typeName} type is already configured.`);
+  export class TransformatorAncestorsNotFoundError extends TransformatorError {
+    constructor(identifier: Objectra.Identifier) {
+      const typeName = Transformator.typeToString(identifier);
+      super(`Transformator (${typeName}) ancestors not found`);
+    }
   }
-}
 
-export class TransformatorMatchNotFoundError extends TransformatorError {
-  constructor(identifier: Objectra.Identifier) {
-    const typeName = Transformator.typeToString(identifier)
-    super(`The transformator for ${typeName} type or its ancestors is not registered.`);
+  export class TransformatorRegistrationDuplicationError extends TransformatorError {
+    constructor(identifier: Objectra.Identifier) {
+      const typeName = Transformator.typeToString(identifier);
+      super(`Transformator (${typeName}) already registered`, {
+        solution: [
+          `Register transformator only once`,
+          noOptionalRegistrationsMessage,
+        ],
+      });
+    }
   }
-}
 
-export class SerializationMethodDoesNotExistError extends TransformatorError {
-  constructor(identifier: Objectra.Identifier) {
-    const typeName = Transformator.typeToString(identifier)
-    super(`The transformator for ${typeName} type doesn't have a serialization method`);
+  export class TransformatorConfigSealedError extends TransformatorError {
+    constructor(identifier: Objectra.Identifier) {
+      const typeName = Transformator.typeToString(identifier);
+      super(`Transformator config already sealed`, {
+        solution: [
+          `Add all config options at the initial registration`,
+        ]
+      });
+    }
   }
-}
 
-export class InstantiationMethodDoesNotExistError extends TransformatorError {
-  constructor(identifier: Objectra.Identifier) {
-    const typeName = Transformator.typeToString(identifier)
-    super(`The transformator for ${typeName} type doesn't have a instantiation method`);
+
+  export class TransformatorSerializatorMissingError extends TransformatorError {
+    constructor(identifier: Objectra.Identifier) {
+      const typeName = Transformator.typeToString(identifier);
+      super(`Transformator (${typeName}) does not have a serializer`, {
+        solution: [
+          `Add a serializer function in the registration options`,
+        ]
+      });
+    }
   }
-}
 
-export class InvalidPassthroughArgumentError extends TransformatorError {
-  constructor(identifier: Objectra.Identifier, cause?: unknown) {
-    const typeName = Transformator.typeToString(identifier)
-    super(`The serialized value cannot be passed to the ${typeName} constructor as argument`, {
-      solution: `Create an instantiation method for the type or change the serialization method to return a valid argument value for the type.`,
-      cause,
-    });
+  export class TransformatorInstantiatorMissingError extends TransformationError {
+    constructor(identifier: Objectra.Identifier) {
+      const typeName = Transformator.typeToString(identifier);
+      super(`Transformator (${typeName}) does not have an instantiator`, {
+        solution: [
+          `Add an instantiator function in the registration options`,
+        ]
+      });
+    }
   }
-}
 
-export class InvalidInstantiationArgumentQuantityError extends TransformatorError {
-  constructor(identifier: Objectra.Identifier, cause?: unknown) {
-    const typeName = Transformator.typeToString(identifier);
-    super(`Can not passthrough arguments to the ${typeName} constructor while it takes more than one argument`, {
-      solution: `Create an instantiation method for the type.`,
-      cause,
-    });
+  export class InvalidConstructorArgumetsError extends TransformationError {
+    constructor(identifier: Objectra.Identifier, cause?: unknown) {
+      const typeName = Transformator.typeToString(identifier);
+
+      super(`Transformator (${typeName}) has invalid constructor arguments`, {
+        cause,
+        solution: [
+          `Make sure the right data is passed to the constructor`,
+          `Create a custom instantiator function to handle the instantiation`,
+        ],
+      })
+    }
   }
-}
 
-export class SelfSerializationError extends TransformatorError {
-  constructor(identifier: Objectra.Identifier, cause?: unknown) {
-    const typeName = Transformator.typeToString(identifier);
-    super(`Can not serialize a value of its own type in the ${typeName} transfromator`, {
-      solution: `Refactor the serialization method to not use the serialize method on the instance itself.`,
-      cause,
-    });
+  export class InvalidConstructorArgumentQuantityError extends TransformationError {
+    constructor(identifier: Objectra.Identifier) {
+      const typeName = Transformator.typeToString(identifier);
+      const identifierConstructorArgumentQuantity = typeof identifier === 'string' ? null : identifier.length;
+
+      const solutions: string[] = [
+        `Create a custom instantiator function to handle the instantiation`,
+      ];
+
+      if (identifierConstructorArgumentQuantity !== null) {
+        solutions.unshift(`Define the correct quantity of arguments. Infered quantity: ${identifierConstructorArgumentQuantity} or less`);
+      }
+
+      super(`Transformator (${typeName}) has invalid constructor argument quantity`, {
+        solution: solutions,
+      });
+    }
   }
-}
 
-export class SelfInstantiationError extends TransformatorError {
-  constructor(identifier: Objectra.Identifier, cause?: unknown) {
-    const typeName = Transformator.typeToString(identifier);
-    super(`Can not instantiate a value of its own type in the ${typeName} transfromator`, {
-      solution: `Refactor the instatiation method to not use the instantiate method on the serialized value itself.`,
-      cause,
-    });
+  export class TransformatorSelfSerializationError extends TransformationError {
+    constructor(identifier: Objectra.Identifier, cause?: Error) {
+      const typeName = Transformator.typeToString(identifier);
+      super(`Transformator (${typeName}) transformer (serializator function) propably does not decompose its value properly`, {
+        cause,
+        solution: [
+          `Refactor the serializator function to decompose its instance and then serialize the contents`
+        ],
+      })
+    }
   }
-}
 
-export class ForeignBackloopReferenceError extends TransformatorError {
-  constructor(cause?: unknown) {
-    super(`The passed object to the reference resolver does not belong to the backloop reference tree`, {
-      solution: `Use the specialy created backloop reference tree as a value to the instantiation function`,
-      cause,
-    });
+  export class TransformatorSelfInstantiationError extends TransformationError {
+    constructor(identifier: Objectra.Identifier, cause?: Error) {
+      const typeName = Transformator.typeToString(identifier);
+      super(`Transformator (${typeName}) transformer (instantiator function) propably does not compose its value properly`, {
+        cause,
+        solution: [
+          `Refactor the instantiator function to compose its instance manualy instead of explicitly instantiating it with the bridge`
+        ],
+      })
+    }
   }
-}
 
-export class ArgumentPassthroughIndexAlreadyExistsError extends TransformatorError {
-  constructor(identifier: Objectra.Identifier | undefined, index: number) {
-    const typeName = identifier ? Transformator.typeToString(identifier) : '(ts5 unknown identifier)';
-    super(`Can not set more than 1 passthrough argument at the index ${index} in the ${typeName} transformator`, {
-      solution: `Make sure that you do not repeat the indexes on the passthrough arguments`,
-    });
+  export class ConstructorArgumentIndexDuplicationError extends TransformationError {
+    constructor(identifier: Objectra.Identifier, index: number) {
+      const typeName = Transformator.typeToString(identifier);
+      super(`Transformator (${typeName}) constructor argument for at index (${index}) already setted`, {
+        solution: [
+          `Make sure constructor argument index don't repeat`,
+          `Create a custom serializator and instantiator function to handle the transformation process`,
+        ]
+      });
+    }
   }
-}
 
-export class ArgumentPassthroughIncompatiblanceError extends TransformatorError {
-  constructor(identifier?: Objectra.Identifier) {
-    const typeName = identifier ? Transformator.typeToString(identifier) : '(ts5 unknown identifier)';
-    super(`Can not set argument passthrough property key(s) when the argument passthrough is enabled in the ${typeName} transformator`, {
-      solution: `Disable the argument passthrough option on the transformator`,
-    });
+  export class TransformatorInvalidTypeError extends TransformationError {
+    constructor(identifier: Objectra.Identifier) {
+      const typeName = Transformator.typeToString(identifier);
+      super(`Transformator (${typeName}) has an invalid type`);
+    }
   }
 }
