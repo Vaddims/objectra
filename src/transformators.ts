@@ -73,8 +73,9 @@ export const objectTransformator = Transformator.register(Object)
     const result = (instance ?? {}) as IndexableObject;
     for (const key in value) {
       const element = (value as any)[key];
-      keyPath.push(key);
-      result[key] = instantiateValue(element);
+      const formattedKey = Transformator.getMetaKeyRepresenter(key);
+      keyPath.push(formattedKey);
+      result[formattedKey] = instantiateValue(element);
       keyPath.pop();
     }
 
@@ -98,9 +99,10 @@ export const objectTransformator = Transformator.register(Object)
     }
 
     const result: Objectra.Content<any> = {}
-    const serializeProperties = (keys: string[] | readonly string[]) => {
+    const serializeProperties = (keys: PropertyKey[] | readonly PropertyKey[]) => {
       for (const key of keys) {
-        result[key] = serialize(instance[key]);
+        const metaKey = Transformator.projectMetaKey(key);
+        result[metaKey] = serialize(instance[key]);
       }
     }
 

@@ -5,6 +5,17 @@ import type { Backloop } from "./types/backloop.types";
 
 import { ObjectraError, TransformatorError } from './errors';
 
+export enum MetaKeyType {
+  Key = 'K',
+  Index = 'I',
+  Symbol = 'S',
+}
+
+export type MetaStringKeyTemplate = `${MetaKeyType.Key}:${string}`;
+export type MetaIndexKeyTemplate = `${MetaKeyType.Index}:${string}`;
+export type MetaSymbolKeyTemplate = `${MetaKeyType.Symbol}@${number | ''}:${string}`;
+export type MetaKeyTemplate = MetaStringKeyTemplate | MetaSymbolKeyTemplate;
+
 type IdentifierInstance<RegistrationIdentifier> = RegistrationIdentifier extends Constructor 
   ? InstanceType<RegistrationIdentifier> 
   : RegistrationIdentifier;
@@ -21,10 +32,10 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
   // TODO Merge argumentPassthrough with argumentPassthroughPropertyKeys (as null or array)
   public readonly argumentPassthrough: boolean;
   public readonly ignoreDefaultArgumentBehaviour: boolean;
-  public readonly argumentPassthroughPropertyKeys: readonly string[]; // Not combinable with global argumentPassthrough
+  public readonly argumentPassthroughPropertyKeys: readonly PropertyKey[]; // Not combinable with global argumentPassthrough
   
   // Property seperation
-  public readonly propertyExclusionMask: readonly string[];
+  public readonly propertyExclusionMask: readonly PropertyKey[];
   
   // Branching
   public readonly useSerializationSymbolIterator: boolean;
@@ -172,7 +183,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
     );
 
     if (transformatorIndex === -1) {
-      throw new TransformatorError.TransformatorNotFoundError(this.type);
+      throw new TransformatorError.TransformatorMissingError(this.type);
     }
 
     const splittedConfigOptions = Transformator.splitConfigOptions(options);
@@ -198,7 +209,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
   }
 
   public getMaskedObjectPropertyNames(instance: InstanceType) {
-    return Object.getOwnPropertyNames(instance).filter(
+    return [...Object.getOwnPropertyNames(instance), ...Object.getOwnPropertySymbols(instance)].filter(
       (key) => !this.propertyExclusionMask.includes(key)
     );
   }
@@ -224,7 +235,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
     return Function;
   }
 
-  // #region Registration utilities
+  // ! #region Registration utilities
   private static isDescribable<T extends Objectra.Identifier>(identifier: T, overload?: number) {
     return (transformator: Transformator): transformator is Transformator<T> => (
       (typeof identifier === 'function' || transformator.overload === overload)
@@ -257,7 +268,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
   public static getStaticByStringType(name: string, overload?: number) {
     const transformator = Transformator.findStaticByStringType(name, overload);
     if (!transformator) {
-      throw new TransformatorError.TransformatorNotFoundError(name);
+      throw new TransformatorError.TransformatorMissingError(name);
     }
 
     return transformator;
@@ -270,7 +281,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
   public static getStatic<T extends Objectra.Identifier>(identifier: T, overload?: number) {
     const transformator = Transformator.findStatic(identifier, overload);
     if (!transformator) {
-      throw new TransformatorError.TransformatorNotFoundError(identifier);
+      throw new TransformatorError.TransformatorMissingError(identifier);
     }
 
     return transformator;
@@ -291,7 +302,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
   public static getAvailable<T extends Objectra.Identifier>(identifier: T, overload?: number) {
     const transformator = Transformator.findAvailable(identifier, overload);
     if (!transformator) {
-      throw new TransformatorError.TransformatorNotFoundError(identifier);
+      throw new TransformatorError.TransformatorMissingError(identifier);
     }
 
     return transformator;
@@ -363,7 +374,105 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
   }
   // #endregion
 
-  // #region Decorators
+  
+  private static readonly staticSymbols: [symbol, number?][] = [];
+  public static registerSymbol(symbol: symbol, overload?: number) {
+    if (Transformator.findSymbol(symbol.description!, overload)) {
+      throw 'symbol registered';
+    }
+
+    Transformator.staticSymbols.push([symbol, overload]);
+  }
+
+  public static createSymbol(key: string, overload?: number) {
+    const symbol = Symbol(key);
+    Transformator.registerSymbol(symbol, overload);
+    return symbol;
+  }
+
+  public static findSymbol(symbolDescription: string, symbolOverload?: number) {
+    const symbolRegistration = Transformator.staticSymbols.find(([symbol, overload]) => symbol.description === symbolDescription && symbolOverload === overload);
+    return symbolRegistration?.[0] ?? null;
+  }
+
+  public static getSymbol(symbolDescription: string, symbolOverload?: number) {
+    const symbol = Transformator.findSymbol(symbolDescription, symbolOverload);
+    if (!symbol) {
+      throw new TransformatorError.SymbolRegistrationMissingError(symbolDescription);
+    }
+
+    return symbol;
+  }
+
+  private static createMetaStringKey(name: string): MetaStringKeyTemplate {
+    return `${MetaKeyType.Key}:${name}`;
+  }
+
+  private static createMetaIndexKey(name: number): MetaIndexKeyTemplate {
+    return `${MetaKeyType.Index}:${name}`;
+  }
+
+  private static createMetaSymbolKey(key: string, overload?: number): MetaSymbolKeyTemplate {
+    return `${MetaKeyType.Symbol}@${overload ?? ''}:${key}`;
+  }
+
+  public static decodeMetaKey(metaKey: MetaKeyTemplate) {
+    const [meta, key] = metaKey.split(/:(.+)/, 2);
+    const [type, ...args] = meta.split('@') as [MetaKeyType, ...string[]];
+    
+    switch (type) {
+      case MetaKeyType.Key:
+        return {
+          type,
+          key,
+        }
+
+      case MetaKeyType.Index:
+        return {
+          type,
+          index: Number(key),
+        }
+        
+      case MetaKeyType.Symbol:
+        return {
+          type,
+          symbol: Transformator.getSymbol(key, Number(args[0])),
+        }
+    }
+  }
+
+  public static getMetaKeyRepresenter(metaKey: string) {
+    const decodedMetaKey = Transformator.decodeMetaKey(metaKey as MetaKeyTemplate);
+    switch(decodedMetaKey.type) {
+      case MetaKeyType.Key:
+        return decodedMetaKey.key;
+
+      case MetaKeyType.Index:
+        return Number(decodedMetaKey.index);
+
+      case MetaKeyType.Symbol:
+        return decodedMetaKey.symbol;
+    }
+  }
+
+  public static projectMetaKey(target: PropertyKey) {
+    if (typeof target === 'number') {
+      return Transformator.createMetaIndexKey(target);
+    }
+
+    if (typeof target === 'string') {
+      return Transformator.createMetaStringKey(target);
+    }
+
+    const symbolRegistration = Transformator.staticSymbols.find(([symbol]) => symbol === target);
+    if (!symbolRegistration) {
+      throw new TransformatorError.SymbolRegistrationMissingError(target);
+    }
+
+    return Transformator.createMetaSymbolKey(symbolRegistration[0].description!, symbolRegistration[1]);
+  }
+
+  // ! #region Decorators
 
   private static readonly awaitingRegistrationFieldResolvers: Transformator.RegistrationCallbackQueueSet = new Set();
   public static Register<T = unknown, S = any, K extends Constructor = T extends Constructor ? T : Constructor<T>>(options: Transformator.ConfigOptions<IdentifierInstance<K>, S> = {}) {
@@ -487,7 +596,7 @@ export namespace Transformator {
     readonly value: Objectra<Objectra.Content<S>>;
     readonly instance?: V;
     readonly initialTransformator: Transformator;
-    readonly keyPath: string[];
+    readonly keyPath: PropertyKey[];
   }
 
   export namespace Transformer {
@@ -509,7 +618,7 @@ export namespace Transformator {
       readonly getRepresenterValue: <T>(endpoint: Backloop.Reference<Objectra<T>>) => T;
       readonly instantiateRepresenter: <T>(endpoint: Backloop.Reference<Objectra<T>>) => T;
       readonly initialTransformator: Transformator;
-      readonly keyPath: string[];
+      readonly keyPath: PropertyKey[];
       readonly useSerializationSymbolIterator: boolean;
     }
 
@@ -528,9 +637,9 @@ export namespace Transformator {
 
   export interface SpecificationOptions {
     readonly argumentPassthrough?: boolean;
-    readonly argumentPassthroughPropertyKeys?: string[];
+    readonly argumentPassthroughPropertyKeys?: PropertyKey[];
     readonly ignoreDefaultArgumentBehaviour?: boolean;
-    readonly propertyExclusionMask?: string[];
+    readonly propertyExclusionMask?: PropertyKey[];
     readonly useSerializationSymbolIterator?: boolean;
     readonly symbolIteratorEntryDepth?: number;
   }

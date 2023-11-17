@@ -110,7 +110,7 @@ export namespace ObjectraError {
 export class TransformatorError extends TransformationError {}
 export namespace TransformatorError {
   const noOptionalRegistrationsMessage = 'Make sure the registration is guaranteed to be defined and is not inside of statements';
-  export class TransformatorNotFoundError extends TransformatorError {
+  export class TransformatorMissingError extends TransformatorError {
     constructor(identifier: Objectra.Identifier) {
       const typeName = Transformator.typeToString(identifier);
       super(`Transformator (${typeName}) not found`, {
@@ -122,7 +122,7 @@ export namespace TransformatorError {
     }
   }
 
-  export class TransformatorAncestorsNotFoundError extends TransformatorError {
+  export class TransformatorAncestorsMissingError extends TransformatorError {
     constructor(identifier: Objectra.Identifier) {
       const typeName = Transformator.typeToString(identifier);
       super(`Transformator (${typeName}) ancestors not found`);
@@ -248,6 +248,12 @@ export namespace TransformatorError {
     constructor(identifier: Objectra.Identifier) {
       const typeName = Transformator.typeToString(identifier);
       super(`Transformator (${typeName}) has an invalid type`);
+    }
+  }
+
+  export class SymbolRegistrationMissingError extends TransformationError {
+    constructor(symbol: symbol | string) {
+      super(`Symbol (${typeof symbol === 'string' ? symbol : symbol.description}) not found`);
     }
   }
 }

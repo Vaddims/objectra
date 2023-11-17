@@ -93,6 +93,8 @@ describe('test objectra serialization and instantiation', () => {
 		});
 
 		test('object', () => {
+			const customSymbol = Transformator.createSymbol('sad', 34);
+
 			const complexObject = {
 				number,
 				string,
@@ -100,11 +102,13 @@ describe('test objectra serialization and instantiation', () => {
 				object: { number, string, boolean },
 				set: new Set([string]),
 				map: new Map(),
+				[customSymbol]: string,
 			};
 
 			const complexObjectDuplicate = Objectra.duplicate(complexObject);
 			expect(complexObjectDuplicate).toStrictEqual(complexObject);
 			expect(complexObjectDuplicate).not.toBe(complexObject);
+			expect(customSymbol in complexObjectDuplicate).toBeTruthy();
 		});
 
 		describe('function', () => {

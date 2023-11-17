@@ -272,7 +272,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			const superTransformators = Transformator.getSuperTransformators(transformator.type);
 			const instantiationTransformator = Array.from(superTransformators).find(transformator => transformator.instantiate);
 			if (!instantiationTransformator) {
-				throw new TransformatorError.TransformatorAncestorsNotFoundError(transformator.type);
+				throw new TransformatorError.TransformatorAncestorsMissingError(transformator.type);
 			}
 
 			if (transformator.useSerializationSymbolIterator) {
@@ -430,7 +430,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 	public toModel(): Objectra.Model {
 		const createModel = (objectra: Objectra) => {
 			if (objectra.identifier && !Transformator.staticExists(objectra.identifier, objectra.overload)) {
-				throw new TransformatorError.TransformatorNotFoundError(objectra.identifier);
+				throw new TransformatorError.TransformatorMissingError(objectra.identifier);
 			}
 			
 			const model: Writeable<Objectra.Model> = {};
@@ -563,7 +563,6 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			}
 			
 			if (!instanceIsClassDeclaration) {
-				// TODO Add id (bounce to compose method and handle them as full references)
 				referableReferences.add(instance);
 			}
 
@@ -584,7 +583,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 
 			const highestSerializationTransformator = Array.from(transformators).find(transformator => transformator.serialize);
 			if (!highestSerializationTransformator) {
-				throw new TransformatorError.TransformatorAncestorsNotFoundError(instance.constructor);
+				throw new TransformatorError.TransformatorAncestorsMissingError(instance.constructor);
 			}
 
 			const hoistingReferences = Array
