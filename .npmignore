@@ -8,3 +8,4 @@ tsconfig.json
 .DS_Store
 examples
 tsconfig.example.json
+public
