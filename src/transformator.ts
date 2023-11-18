@@ -142,7 +142,7 @@ export class Transformator<IdentifierType extends Objectra.Identifier = Objectra
     }
 
     const { value, instantiate, instance, initialTransformator = this, keyPath } = bridge;
-    const [backloopRepresenter, resolve] = value['createBackloopReferenceDuplex']();
+    const [backloopRepresenter, resolve] = value.createBackloopReferenceCommunication();
 
     const representer = backloopRepresenter;
     const instantiateValue = instantiate;
@@ -586,13 +586,13 @@ export namespace Transformator {
   }
 
   export interface SerializationBridge<Instance = unknown> {
-    readonly objectrafy: Objectra.ValueSerialization;
+    readonly objectrafy: Objectra.Serializator;
     readonly instance: Instance;
     readonly instanceTransformator: Transformator;
   }
 
   export interface InstantiationBridge<S, V> {
-    readonly instantiate: Objectra.ValueInstantiation;
+    readonly instantiate: Objectra.Compositor;
     readonly value: Objectra<Objectra.Content<S>>;
     readonly instance?: V;
     readonly initialTransformator: Transformator;
@@ -613,7 +613,7 @@ export namespace Transformator {
     export interface InstantiationBridge<SerializedType, Instance> {
       readonly instance?: Instance;
       readonly representer: Backloop.Reference<Objectra<Objectra.Content<SerializedType>>>;
-      readonly instantiateValue: Objectra.ValueInstantiation;
+      readonly instantiateValue: Objectra.Compositor;
       readonly getRepresenterObjectra: Backloop.ResolveRepresenter;
       readonly getRepresenterValue: <T>(endpoint: Backloop.Reference<Objectra<T>>) => T;
       readonly instantiateRepresenter: <T>(endpoint: Backloop.Reference<Objectra<T>>) => T;

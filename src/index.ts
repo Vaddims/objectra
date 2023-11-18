@@ -154,12 +154,6 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		return new Objectra.Cluster(objectraClusterEntries);
 	}
 
-	/** Create an easy to use, */
-	public getContentReferenceBackloop() {
-		const duplex = this.createBackloopReferenceDuplex();
-		return duplex;
-	}
-
 	public contentIsInstanceOf(constructor: Constructor): boolean {
 		if (!this.identifier) {
 			return false;
@@ -189,7 +183,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			injectNewReferenceDefinitionsInto(reference);
 		}
 
-		const composeValueWithinContext: Objectra.ValueInstantiation = (objectra) => {
+		const composeValueWithinContext: Objectra.Compositor = (objectra) => {
 			if (objectra.isReferenceConsumer) {
 				// * Placeholder for reference injection
 
@@ -476,12 +470,12 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		return createModel(this);
 	}
 	
-	private createBackloopReferenceDuplex(): Objectra.BackloopDuplex<ContentType> {
+	public createBackloopReferenceCommunication(): Objectra.BackloopReference.Communication<ContentType> {
 		type Representer = {} | [];
 		const referenceMap = new Map<Representer, Objectra<any>>();
 
 		type CommonObjectra = Objectra<Objectra.Content<any>>;
-		const createReference: Objectra.BackloopReferenceCreator = <T extends CommonObjectra>(objectra: T) => {
+		const createReference: Objectra.BackloopReference.Creator = <T extends CommonObjectra>(objectra: T) => {
 			if (typeof objectra.content !== 'object' || objectra.content === null) {
 				const representer = {};
 				referenceMap.set(representer, objectra);
@@ -503,7 +497,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			return representer as Backloop.Reference<T>;
 		}
 
-		const resolveReference: Objectra.BackloopReferenceResolver = <T extends Backloop.Reference>(representer: T) => {
+		const resolveReference: Objectra.BackloopReference.Resolver = <T extends Backloop.Reference>(representer: T) => {
 			const objectra = referenceMap.get(representer);
 			if (!objectra) {
 				throw new ObjectraError.ForeignBackloopReferenceError();
@@ -517,8 +511,8 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 	}
 
 	public static from<T>(value: T, options: Objectra.Decomposition.Options = {}): Objectra<Objectra.Content<T>, T> {
-		const objectReferenceData = Objectra.getObjectData(value);
-		const referenceHoistingParentMap = Objectra.getReferenceHoistingParents(objectReferenceData);
+		const objectStrucutreAnalysis = Objectra.analyzeObjectStructure(value);
+		const referenceHoistingParentMap = Objectra.getReferenceHoistingParents(objectStrucutreAnalysis);
 		const referableReferences = new Set<Objectra.Reference>();
 		const alternativeReferenceTransformation = new Map(
 			options.altMapping?.map(([reference, identifer, overload]) => {
@@ -527,12 +521,12 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			})
 		);
 		
-		const { repeatingReferences } = objectReferenceData;
+		const { repeatingReferences } = objectStrucutreAnalysis;
 		const referenceIdentifiers = new Map<Objectra.Reference, number>(
 			Array.from(repeatingReferences).map((reference, index) => [reference, index])
 		);
 
-		const serializeValueWithinContext: Objectra.ValueSerialization = <T>(providedInstance: T) => {
+		const serializeValueWithinContext: Objectra.Serializator = <T>(providedInstance: T) => {
 			if (typeof providedInstance === 'undefined') {
 				return new Objectra<Objectra.Content<T>>({ content: undefined });
 			}
@@ -687,7 +681,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		return parseModel(typeof model === 'string' ? JSON.parse(model) : model);
 	}
 
-	public static duplicate<T>(value: T, options?: Objectra.Duplication.Options) {
+	public static duplicate<T>(value: T, options?: Objectra.Duplication.Options): T {
 		return Objectra.from(value, options).compose();
 	}
 
@@ -695,7 +689,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		return Objectra.from(value).toModel();
 	}
 
-	public static composeFromModel(model: Objectra.Model | string) {
+	public static composeFromModel(model: Objectra.Model | string): unknown {
 		return Objectra.fromModel(model).compose();
 	}
 
@@ -707,12 +701,12 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		return Objectra.isIterableEntity(target) || typeof target === 'function' || typeof target === 'symbol';
 	}
 
-	public static getObjectData(value: unknown) {
+	public static analyzeObjectStructure(value: unknown): Objectra.ObjectStrucureAnalysis {
 		const referenceAppearancePathMap: Objectra.ReferenceAppearancePathMap = new Map();
 		const repeatingReferences = new Set<Objectra.Reference>();
 		let actualDepth = 0; // The depth with circular references counting in (Infinite when circular)
 		let shallowDepth = 0; // The depth with circular reference block
-		analyzeValue(value);
+		analyzeValue(value, []);
 
 		return {
 			referenceAppearancePathMap,
@@ -721,7 +715,7 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 			shallowDepth,
 		}
 
-		function analyzeValue(target: unknown, pathStack: IterableEntity[] = []) {
+		function analyzeValue(target: unknown, pathStack: IterableEntity[]) {
 			if (!Objectra.isValueReference(target) || typeof target.constructor !== 'function') {
 				return;
 			}
@@ -776,23 +770,22 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 		}
 	}
 
-	private static getReferenceCommonParent(referenceAppearancePaths: IterableEntity[][]) {
+	private static getReferenceCommonParent(referenceAppearancePaths: IterableEntity[][]): IterableEntity {
 		const referencePath = referenceAppearancePaths[0];
-		let depth = -1;
 		let pathsShareParent = true;
+		let depth = 0;
 
 		do {
-			depth++;
 			const nextDepth = depth + 1;
 			const parallelPathElements = referenceAppearancePaths.map(path => path[nextDepth]);
 			pathsShareParent = everyArrayElementIsEqual(parallelPathElements);
-		} while (depth < referencePath.length - 1 && pathsShareParent);
+		} while ((++depth < referencePath.length - 1) && pathsShareParent);
 
 		return referencePath[depth];
 	} 
 
-	private static getReferenceHoistingParents(objectReferenceData: Objectra.ObjectReferenceData) {
-		const { repeatingReferences, referenceAppearancePathMap } = objectReferenceData;
+	private static getReferenceHoistingParents(objectStrucureAnalysis: Objectra.ObjectStrucureAnalysis): Map<Objectra.Reference, Objectra.Reference> {
+		const { repeatingReferences, referenceAppearancePathMap } = objectStrucureAnalysis;
 		const referenceHoistingParents = new Map<Objectra.Reference, Objectra.Reference>();
 
 		for (const repeatingReference of repeatingReferences) {
@@ -807,17 +800,12 @@ export class Objectra<ContentType extends Objectra.Content<any> = Objectra.Conte
 	}
 
 	public static Cluster = ObjectraCluster;
-
 	private static readonly UnresolvedReferencePlaceholder = class UnresolvedReferencePlaceholder {};
 }
 
 export namespace Objectra {
 	export type Identifier = Constructor | Function | string;
 	export type Reference = symbol | IterableEntity | Function;
-
-	export type GetContentType<T extends Objectra> = T extends Objectra<infer U> ? U : never;
-	export type GetInstanceType<T extends Objectra> = T extends Objectra<any, infer U> ? U : never;
-
 	export type ContentStructure<T> = ES3Primitives | IndexableObject<T> | T[];
 
 	// TODO Prevent object methods from type mapping
@@ -832,12 +820,6 @@ export namespace Objectra {
 				{ [K in keyof T]: Objectra<Content<T[K]>> }
 	);
 
-	export enum ReferenceType {
-		None,
-		Origin,
-		Depended,
-	}
-
 	export interface Init<ContentType extends Objectra.Content<any>> {
 		readonly identifier?: Identifier;
 		readonly isStructureDeclaration?: boolean;
@@ -847,17 +829,21 @@ export namespace Objectra {
 		readonly content?: ContentType;
 	}
 
-	export type ValueSerialization = <T>(instance: T) => Objectra<Objectra.Content<T>, T>;
-	export type ValueInstantiation = <K, T>(instance: Objectra<K, T>) => T;
+	export type Serializator = <T>(instance: T) => Objectra<Objectra.Content<T>, T>;
+	export type Compositor = <K, T>(instance: Objectra<K, T>) => T;
 
-	export type BackloopReferenceCreator = <T extends Objectra<Objectra.Content<any>>>(objectra: T) => Backloop.Reference<T>;
-	export type BackloopReferenceResolver = <T extends Backloop.Reference>(representer: T) => Backloop.ReferenceResolve<T>;
-	export type BackloopDuplex<T> = readonly [Backloop.Reference<Objectra<T>>, BackloopReferenceResolver];
+	export namespace BackloopReference {
+		export type Creator = <T extends Objectra<Objectra.Content<any>>>(objectra: T) => Backloop.Reference<T>;
+		export type Resolver = <T extends Backloop.Reference>(representer: T) => Backloop.ReferenceResolve<T>;
+		export type Communication<T> = readonly [Backloop.Reference<Objectra<T>>, Resolver];
+	}
 
 	export type ReferenceAppearancePathMap = Map<Objectra.Reference, IterableEntity[][]>;
-	export interface ObjectReferenceData {
+	export interface ObjectStrucureAnalysis {
 		readonly referenceAppearancePathMap: ReferenceAppearancePathMap;
 		readonly repeatingReferences: Set<Objectra.Reference>;
+		readonly actualDepth: number;
+		readonly shallowDepth: number;
 	}
 
 	export interface Model {
@@ -874,11 +860,11 @@ export namespace Objectra {
 
 	export namespace Decomposition {
 		export namespace Options {
-
+			export type AltMappingEntry = [Objectra.Reference, string, number?];
 		}
 
 		export interface Options {
-			altMapping?: [Objectra.Reference, string, number?][];
+			readonly altMapping?: Options.AltMappingEntry[];
 		}
 	}
 
@@ -887,6 +873,9 @@ export namespace Objectra {
 
 		}
 	}
+
+	export type GetContentType<T extends Objectra> = T extends Objectra<infer U> ? U : never;
+	export type GetInstanceType<T extends Objectra> = T extends Objectra<any, infer U> ? U : never;
 }
 
 export * as errors from './errors';
